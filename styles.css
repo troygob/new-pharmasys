@@ -107,10 +107,13 @@ main {
   color: white;
 }
 
-.content-area {
+.main-content {
   flex: 1;
   min-width: 0;
 }
+/* .sidebar-link:logout {
+    
+} */
 /* ---------- Login page ---------- */
 
 .login-container {

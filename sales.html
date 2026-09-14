@@ -18,9 +18,8 @@
     <div class="sidebar-header"> <h2>Pharmacy Management System</h2> </div>
     <nav class="sidebar-nav">
       <a href="index.html" class="sidebar-link active">Inventory</a>
-      <a href="sales.html" class="sidebar-link">Sales</a>
       <a href="settings.html" class="sidebar-link">Settings</a>
-      <a href="login-page.html" class="sidebar-link">Logout</a>
+      <a href="login-page.html" class="sidebar-link logout">Logout</a>
     </nav>
     
   </aside>
@@ -40,7 +39,7 @@
       <div class="stats">
         <div class="stat-card">
           <div class="value" id="stat-total">0</div>
-          <div class="label">Medicines in stock</div>
+          <div class="label">sales in stock</div>
         </div>
         <div class="stat-card">
           <div class="value" id="stat-low">0</div>
@@ -74,7 +73,7 @@
           </tbody>
         </table>
         <div class="empty-state" id="empty-state" style="display:none;">
-          No medicines yet. Click "Add medicine" to create your first entry.
+          No sales yet. Click "Add medicine" to create your first entry.
         </div>
       </div>
     </main>
@@ -134,24 +133,24 @@ if (!supabaseClient) {
 /* ======================================================================
    2) STATE
    ====================================================================== */
-let medicines = [];
+let sales = [];
 
 /* ======================================================================
    3) DATA LOADING
    ====================================================================== */
-async function loadMedicines() {
+async function loadsales() {
   if (!supabaseClient) return;
 
   const { data, error } = await supabaseClient
-    .from("medicines")
+    .from("sales")
     .select("*")
     .order("name", { ascending: true });
 
   if (error) {
-    console.error("Error loading medicines:", error.message);
+    console.error("Error loading sales:", error.message);
     return;
   }
-  medicines = data;
+  sales = data;
   renderTable();
   renderStats();
 }
@@ -176,7 +175,7 @@ function statusBadge(med) {
 function renderTable() {
   const query = document.getElementById("search").value.toLowerCase();
   const tbody = document.getElementById("table-body");
-  const filtered = medicines.filter(m =>
+  const filtered = sales.filter(m =>
     m.name.toLowerCase().includes(query) ||
     (m.category || "").toLowerCase().includes(query)
   );
@@ -200,11 +199,11 @@ function renderTable() {
 }
 
 function renderStats() {
-  document.getElementById("stat-total").textContent = medicines.length;
+  document.getElementById("stat-total").textContent = sales.length;
   document.getElementById("stat-low").textContent =
-    medicines.filter(m => m.quantity <= 10).length;
+    sales.filter(m => m.quantity <= 10).length;
   document.getElementById("stat-expiring").textContent =
-    medicines.filter(m => daysUntil(m.expiry_date) >= 0 && daysUntil(m.expiry_date) <= 30).length;
+    sales.filter(m => daysUntil(m.expiry_date) >= 0 && daysUntil(m.expiry_date) <= 30).length;
 }
 
 function escapeHtml(str) {
@@ -228,7 +227,7 @@ function closeModal() {
 }
 
 function editMedicine(id) {
-  const med = medicines.find(m => m.id == id);
+  const med = sales.find(m => m.id == id);
   if (!med) return;
   document.getElementById("modal-title").textContent = "Edit medicine";
   document.getElementById("medicine-id").value = med.id;
@@ -257,31 +256,31 @@ async function saveMedicine(event) {
   };
 
   const { error } = id
-    ? await supabaseClient.from("medicines").update(record).eq("id", id)
-    : await supabaseClient.from("medicines").insert(record);
+    ? await supabaseClient.from("sales").update(record).eq("id", id)
+    : await supabaseClient.from("sales").insert(record);
 
   if (error) {
     alert("Could not save: " + error.message);
     return;
   }
   closeModal();
-  loadMedicines();
+  loadsales();
 }
 
 async function deleteMedicine(id) {
   if (!confirm("Delete this medicine?")) return;
-  const { error } = await supabaseClient.from("medicines").delete().eq("id", id);
+  const { error } = await supabaseClient.from("sales").delete().eq("id", id);
   if (error) {
     alert("Could not delete: " + error.message);
     return;
   }
-  loadMedicines();
+  loadsales();
 }
 
 /* ======================================================================
    6) INIT
    ====================================================================== */
-loadMedicines();
+loadsales();
 </script>
 
 </body>
