@@ -1,15 +1,19 @@
+/* Palette: teal / aqua (from #00ADB3 .. #CCEFF0) */
 :root {
   /* Colors */
-  --color-bg:        #F6F4EF;   /* page background */
+  --color-bg:        #EEF9FA;   /* page background (lightest aqua) */
   --color-surface:   #FFFFFF;   /* cards, table, modal */
-  --color-border:    #E3DFD5;   /* hairline borders */
-  --color-text:      #26332E;   /* main text */
-  --color-text-soft: #6B7570;   /* secondary text */
-  --color-primary:   #2F6F63;   /* buttons, accents (deep teal) */
-  --color-primary-dark: #234F46;
+  --color-border:    #CCEFF0;   /* hairline borders */
+  --color-text:      #12383B;   /* main text (deep teal) */
+  --color-text-soft: #4B7478;   /* secondary text */
+  --color-primary:   #00838A;   /* buttons, accents (teal, readable with white text) */
+  --color-primary-dark: #006469;
+  --color-accent:    #00ADB3;   /* brand teal for highlights */
+  --color-sidebar:   #CCEFF0;   /* sidebar background */
+  --color-hover:     #99DEE1;   /* hover states */
   --color-danger:    #B4483A;   /* delete, low-stock */
   --color-warning:   #C68A2E;   /* expiring-soon */
-  --color-success:   #3F7D4C;   /* in-stock */
+  --color-success:   #2E7D5B;   /* in-stock */
 
   /* Type */
   --font-body: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
@@ -35,7 +39,7 @@ body {
 /* ---------- Header ---------- */
 header {
   background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 3px solid var(--color-accent);
   padding: 1.25rem 2rem;
 }
 header .inner {
@@ -71,8 +75,8 @@ main {
 
 .sidebar {
   flex-shrink: 0;
-  background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
+  background: var(--color-sidebar);
+  border-right: 1px solid var(--color-hover);
   width: 220px;
   padding: 1.5rem 1rem;
 }
@@ -99,7 +103,7 @@ main {
 }
 
 .sidebar-link:hover {
-  background: var(--color-bg);
+  background: var(--color-hover);
 }
 
 .sidebar-link.active {
@@ -238,7 +242,7 @@ th {
   font-size: 0.78rem;
 }
 tr:last-child td { border-bottom: none; }
-tr:hover td { background: #FAF9F5; }
+tr:hover td { background: #F0FAFB; }
 
 .badge {
   display: inline-block;
@@ -246,7 +250,7 @@ tr:hover td { background: #FAF9F5; }
   border-radius: 999px;
   font-size: 0.75rem;
 }
-.badge-success { background: #E7F3E9; color: var(--color-success); }
+.badge-success { background: #E2F4EC; color: var(--color-success); }
 .badge-warning { background: #FBF1DF; color: var(--color-warning); }
 .badge-danger  { background: #FBEDEA; color: var(--color-danger); }
 
@@ -261,7 +265,7 @@ tr:hover td { background: #FAF9F5; }
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(38, 51, 46, 0.4);
+  background: rgba(18, 56, 59, 0.4);
   align-items: center;
   justify-content: center;
   padding: 1rem;
@@ -299,4 +303,15 @@ tr:hover td { background: #FAF9F5; }
   justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 1.5rem;
+}
+
+.sidebar-header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.sidebar-logo {
+  max-width: 100%;
+  max-height: 80px;
+  height: auto;
 }
