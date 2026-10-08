@@ -3,13 +3,13 @@
   /* Colors */
   --color-bg:        #EEF9FA;   /* page background (lightest aqua) */
   --color-surface:   #FFFFFF;   /* cards, table, modal */
-  --color-border:    #CCEFF0;   /* hairline borders */
-  --color-text:      #12383B;   /* main text (deep teal) */
+  --color-border:    #DCE4EA;   /* hairline borders */
+  --color-text:      #14384F;   /* main text (deep teal) */
   --color-text-soft: #4B7478;   /* secondary text */
   --color-primary:   #00838A;   /* buttons, accents (teal, readable with white text) */
   --color-primary-dark: #006469;
   --color-accent:    #00ADB3;   /* brand teal for highlights */
-  --color-sidebar:   #CCEFF0;   /* sidebar background */
+  --color-sidebar:   #cceeee;   /* sidebar background */
   --color-hover:     #99DEE1;   /* hover states */
   --color-danger:    #B4483A;   /* delete, low-stock */
   --color-warning:   #C68A2E;   /* expiring-soon */
@@ -314,4 +314,15 @@ tr:hover td { background: #F0FAFB; }
   max-width: 100%;
   max-height: 80px;
   height: auto;
+}
+
+.stockin-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, 520px) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .stockin-layout { grid-template-columns: 1fr; }
 }
