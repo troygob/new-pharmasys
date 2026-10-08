@@ -7,6 +7,7 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase.js"></script>
 <link rel="stylesheet" href="styles.css">
 
 </head>
@@ -14,16 +15,8 @@
 
 <div class="app-layout">
 
-  <aside class="sidebar">
-    <div class="sidebar-header"> <h2>Pharmacy Management System</h2> </div>
-    <nav class="sidebar-nav">
-      <a href="index.html" class="sidebar-link active">Inventory</a>
-      <a href="sales.html" class="sidebar-link">Sales</a>
-      <a href="settings.html" class="sidebar-link">Settings</a>
-      <a href="login-page.html" class="sidebar-link">Logout</a>
-    </nav>
-    
-  </aside>
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="../js/sidebar.js"></script>
 
   <div class="main-content">
     <header>
@@ -44,7 +37,7 @@
         </div>
         <div class="stat-card">
           <div class="value" id="stat-low">0</div>
-          <div class="label">Low stock (&le; 10 units)</div>
+          <div class="label">Low stock (at or below reorder level)</div>
         </div>
         <div class="stat-card">
           <div class="value" id="stat-expiring">0</div>
@@ -53,7 +46,12 @@
       </div>
 
       <div class="toolbar">
-        <input type="search" id="search" placeholder="Search by name or category..." oninput="renderTable()">
+        <input type="search" id="search" placeholder="Search by code, name, generic name or category..." oninput="renderTable()">
+        <select id="status-filter" onchange="loadMedicines()" style="padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface);">
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+          <option value="All">All</option>
+        </select>
       </div>
 
       <div class="table-wrap">
@@ -89,26 +87,58 @@
     <form id="medicine-form" onsubmit="saveMedicine(event)">
       <input type="hidden" id="medicine-id">
       <div class="field">
+        <label for="medicine_code">Code</label>
+        <input type="text" id="medicine_code" required placeholder="e.g. MED-0001">
+      </div>
+      <div class="field">
         <label for="name">Name</label>
         <input type="text" id="name" required placeholder="e.g. Amoxicillin 500mg">
       </div>
       <div class="field">
-        <label for="category">Category</label>
-        <input type="text" id="category" placeholder="e.g. Antibiotic">
+        <label for="generic_name">Generic name</label>
+        <input type="text" id="generic_name" placeholder="e.g. Amoxicillin">
       </div>
       <div class="field">
-        <label for="quantity">Quantity</label>
-        <input type="number" id="quantity" required min="0" value="0">
+        <label for="category">Category</label>
+        <select id="category"></select>
+      </div>
+      <div class="field">
+        <label for="dosage_form">Dosage form</label>
+        <select id="dosage_form" required>
+          <option>Tablet</option><option>Capsule</option><option>Syrup</option>
+          <option>Suspension</option><option>Injection</option><option>Cream</option>
+          <option>Ointment</option><option>Drops</option><option>Inhaler</option>
+          <option>Powder</option><option selected>Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="strength">Strength</label>
+        <input type="text" id="strength" placeholder="e.g. 500 mg">
       </div>
       <div class="field">
         <label for="price">Price</label>
         <input type="number" id="price" step="0.01" min="0" value="0">
       </div>
       <div class="field">
-        <label for="expiry_date">Expiry date</label>
-        <input type="date" id="expiry_date">
+        <label for="reorder_level">Reorder level</label>
+        <input type="number" id="reorder_level" min="0" value="10">
+      </div>
+      <div id="stock-fields">
+        <div class="field">
+          <label for="batch_number">Batch number</label>
+          <input type="text" id="batch_number" placeholder="e.g. B-2026-01">
+        </div>
+        <div class="field">
+          <label for="quantity">Opening quantity</label>
+          <input type="number" id="quantity" min="0" value="0">
+        </div>
+        <div class="field">
+          <label for="expiry_date">Expiry date</label>
+          <input type="date" id="expiry_date">
+        </div>
       </div>
       <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="clearForm()">Clear</button>
         <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
         <button type="submit" class="btn-primary">Save</button>
       </div>
@@ -116,36 +146,49 @@
   </div>
 </div>
 
+<!-- Medicine details modal -->
+<div class="modal-backdrop" id="details-backdrop">
+  <div class="modal">
+    <h2 id="details-title">Medicine details</h2>
+    <div id="details-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" onclick="closeDetails()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
-/* ======================================================================
-   1) SUPABASE CONNECTION
-   ====================================================================== */
-const SUPABASE_URL = "https://xmzspbblssnmcvccftgu.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhtenNwYmJsc3NubWN2Y2NmdGd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5ODU4MjksImV4cCI6MjEwNDU2MTgyOX0.KLnTNPlmf5nLVVN6WBslLoEYyUEtzKclpgVvO6YHpsY";
-
-const supabaseClient = (SUPABASE_URL.startsWith("http"))
-  ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null;
-
-if (!supabaseClient) {
-  document.getElementById("connection-banner").style.display = "block";
-}
-
 /* ======================================================================
    2) STATE
    ====================================================================== */
-let medicines = [];
+let medicines = [];   // rows from the v_medicine_stock view
+let categories = [];  // rows from categories
 
 /* ======================================================================
    3) DATA LOADING
    ====================================================================== */
-async function loadMedicines() {
-  if (!supabaseClient) return;
-
+async function loadCategories() {
   const { data, error } = await supabaseClient
-    .from("medicines")
-    .select("*")
-    .order("name", { ascending: true });
+    .from("categories")
+    .select("category_id, category_name, status")
+    .order("category_name", { ascending: true });
+
+  if (error) {
+    console.error("Error loading categories:", error.message);
+    return;
+  }
+  categories = data;
+  // Only Active categories can be picked; an inactive one is shown (disabled) if a medicine already uses it
+  document.getElementById("category").innerHTML =
+    `<option value="">— none —</option>` +
+    categories.map(c => `<option value="${c.category_id}"${c.status === "Active" ? "" : " disabled"}>${escapeHtml(c.category_name)}${c.status === "Active" ? "" : " (inactive)"}</option>`).join("");
+}
+
+async function loadMedicines() {
+  const filter = document.getElementById("status-filter").value;
+  let query = supabaseClient.from("v_medicine_stock").select("*");
+  if (filter !== "All") query = query.eq("status", filter);
+  const { data, error } = await query.order("medicine_name", { ascending: true });
 
   if (error) {
     console.error("Error loading medicines:", error.message);
@@ -166,10 +209,11 @@ function daysUntil(dateStr) {
 }
 
 function statusBadge(med) {
-  const days = daysUntil(med.expiry_date);
-  if (days < 0) return `<span class="badge badge-danger">Expired</span>`;
-  if (days <= 30) return `<span class="badge badge-warning">Expiring soon</span>`;
-  if (med.quantity <= 10) return `<span class="badge badge-danger">Low stock</span>`;
+  if (med.status === "Inactive") return `<span class="badge badge-warning">Inactive</span>`;
+  // quantity_on_hand already ignores expired batches
+  if (med.quantity_on_hand <= 0) return `<span class="badge badge-danger">Out of stock</span>`;
+  if (daysUntil(med.nearest_expiry) <= 30) return `<span class="badge badge-warning">Expiring soon</span>`;
+  if (med.is_low_stock) return `<span class="badge badge-danger">Low stock</span>`;
   return `<span class="badge badge-success">In stock</span>`;
 }
 
@@ -177,34 +221,38 @@ function renderTable() {
   const query = document.getElementById("search").value.toLowerCase();
   const tbody = document.getElementById("table-body");
   const filtered = medicines.filter(m =>
-    m.name.toLowerCase().includes(query) ||
-    (m.category || "").toLowerCase().includes(query)
+    m.medicine_name.toLowerCase().includes(query) ||
+    (m.medicine_code || "").toLowerCase().includes(query) ||
+    (m.generic_name || "").toLowerCase().includes(query) ||
+    (m.category_name || "").toLowerCase().includes(query)
   );
 
   document.getElementById("empty-state").style.display = filtered.length ? "none" : "block";
 
   tbody.innerHTML = filtered.map(m => `
     <tr>
-      <td>${escapeHtml(m.name)}</td>
-      <td>${escapeHtml(m.category || "—")}</td>
-      <td>${m.quantity}</td>
-      <td>${Number(m.price || 0).toFixed(2)}</td>
-      <td>${m.expiry_date || "—"}</td>
+      <td>${escapeHtml(m.medicine_name)}</td>
+      <td>${escapeHtml(m.category_name || "—")}</td>
+      <td>${m.quantity_on_hand}</td>
+      <td>${Number(m.unit_price || 0).toFixed(2)}</td>
+      <td>${m.nearest_expiry || "—"}</td>
       <td>${statusBadge(m)}</td>
       <td>
-        <button class="btn-secondary btn-small" onclick="editMedicine('${m.id}')">Edit</button>
-        <button class="btn-danger btn-small" onclick="deleteMedicine('${m.id}')">Delete</button>
+        <button class="btn-secondary btn-small" onclick="viewMedicine(${m.medicine_id})">View</button>
+        <button class="btn-secondary btn-small" onclick="editMedicine(${m.medicine_id})">Edit</button>
+        <button class="${m.status === "Active" ? "btn-danger" : "btn-secondary"} btn-small" onclick="toggleMedicine(${m.medicine_id})">${m.status === "Active" ? "Deactivate" : "Activate"}</button>
       </td>
     </tr>
   `).join("");
 }
 
 function renderStats() {
-  document.getElementById("stat-total").textContent = medicines.length;
+  const active = medicines.filter(m => m.status === "Active");
+  document.getElementById("stat-total").textContent = active.length;
   document.getElementById("stat-low").textContent =
-    medicines.filter(m => m.quantity <= 10).length;
+    active.filter(m => m.is_low_stock).length;
   document.getElementById("stat-expiring").textContent =
-    medicines.filter(m => daysUntil(m.expiry_date) >= 0 && daysUntil(m.expiry_date) <= 30).length;
+    active.filter(m => daysUntil(m.nearest_expiry) >= 0 && daysUntil(m.nearest_expiry) <= 30).length;
 }
 
 function escapeHtml(str) {
@@ -216,10 +264,17 @@ function escapeHtml(str) {
 /* ======================================================================
    5) MODAL / FORM HANDLING
    ====================================================================== */
+function nextMedicineCode() {
+  const nums = medicines.map(m => parseInt((m.medicine_code || "").replace(/\D/g, ""), 10) || 0);
+  return "MED-" + String(Math.max(0, ...nums) + 1).padStart(4, "0");
+}
+
 function openModal() {
   document.getElementById("modal-title").textContent = "Add medicine";
   document.getElementById("medicine-form").reset();
   document.getElementById("medicine-id").value = "";
+  document.getElementById("medicine_code").value = nextMedicineCode();
+  document.getElementById("stock-fields").style.display = "block";   // opening stock only when adding
   document.getElementById("modal-backdrop").classList.add("open");
 }
 
@@ -228,60 +283,148 @@ function closeModal() {
 }
 
 function editMedicine(id) {
-  const med = medicines.find(m => m.id == id);
+  const med = medicines.find(m => m.medicine_id == id);
   if (!med) return;
+  const cat = categories.find(c => c.category_name === med.category_name);
   document.getElementById("modal-title").textContent = "Edit medicine";
-  document.getElementById("medicine-id").value = med.id;
-  document.getElementById("name").value = med.name;
-  document.getElementById("category").value = med.category || "";
-  document.getElementById("quantity").value = med.quantity;
-  document.getElementById("price").value = med.price;
-  document.getElementById("expiry_date").value = med.expiry_date || "";
+  document.getElementById("medicine-id").value = med.medicine_id;
+  document.getElementById("medicine_code").value = med.medicine_code;
+  document.getElementById("name").value = med.medicine_name;
+  document.getElementById("generic_name").value = med.generic_name || "";
+  document.getElementById("category").value = cat ? cat.category_id : "";
+  document.getElementById("dosage_form").value = med.dosage_form;
+  document.getElementById("strength").value = med.strength || "";
+  document.getElementById("price").value = med.unit_price;
+  document.getElementById("reorder_level").value = med.reorder_level;
+  document.getElementById("stock-fields").style.display = "none";    // stock is per batch, not edited here
   document.getElementById("modal-backdrop").classList.add("open");
 }
 
 async function saveMedicine(event) {
   event.preventDefault();
-  if (!supabaseClient) {
-    alert("Connect Supabase first — see the setup guide.");
-    return;
-  }
 
   const id = document.getElementById("medicine-id").value;
   const record = {
-    name: document.getElementById("name").value.trim(),
-    category: document.getElementById("category").value.trim(),
-    quantity: parseInt(document.getElementById("quantity").value, 10),
-    price: parseFloat(document.getElementById("price").value),
-    expiry_date: document.getElementById("expiry_date").value || null,
+    medicine_code: document.getElementById("medicine_code").value.trim(),
+    medicine_name: document.getElementById("name").value.trim(),
+    generic_name:  document.getElementById("generic_name").value.trim() || null,
+    category_id:   document.getElementById("category").value || null,
+    dosage_form:   document.getElementById("dosage_form").value,
+    strength:      document.getElementById("strength").value.trim() || null,
+    unit_price:    parseFloat(document.getElementById("price").value) || 0,
+    reorder_level: parseInt(document.getElementById("reorder_level").value, 10) || 0,
   };
 
-  const { error } = id
-    ? await supabaseClient.from("medicines").update(record).eq("id", id)
-    : await supabaseClient.from("medicines").insert(record);
+  if (id) {
+    const { error } = await supabaseClient.from("medicines").update(record).eq("medicine_id", id);
+    if (error) { alert("Could not save: " + error.message); return; }
+  } else {
+    const { data: created, error } = await supabaseClient
+      .from("medicines").insert(record).select("medicine_id").single();
+    if (error) { alert("Could not save: " + error.message); return; }
 
-  if (error) {
-    alert("Could not save: " + error.message);
-    return;
+    // Opening stock -> one inventory batch (+ audit row)
+    const qty = parseInt(document.getElementById("quantity").value, 10) || 0;
+    if (qty > 0) {
+      const { data: batch, error: invErr } = await supabaseClient.from("inventory").insert({
+        medicine_id:     created.medicine_id,
+        batch_number:    document.getElementById("batch_number").value.trim() || "INITIAL",
+        quantity:        qty,
+        purchase_price:  0,
+        selling_price:   record.unit_price,
+        expiration_date: document.getElementById("expiry_date").value || "2099-12-31",
+      }).select("inventory_id").single();
+      if (invErr) { alert("Medicine saved, but stock failed: " + invErr.message); loadMedicines(); return; }
+
+      await supabaseClient.from("inventory_transactions").insert({
+        inventory_id:     batch.inventory_id,
+        medicine_id:      created.medicine_id,
+        transaction_type: "ADJUSTMENT",
+        quantity_change:  qty,
+        reference_type:   "manual",
+        notes:            "Opening stock added from Inventory page",
+      });
+    }
   }
   closeModal();
   loadMedicines();
 }
 
-async function deleteMedicine(id) {
-  if (!confirm("Delete this medicine?")) return;
-  const { error } = await supabaseClient.from("medicines").delete().eq("id", id);
-  if (error) {
-    alert("Could not delete: " + error.message);
-    return;
-  }
+// Medicines that have batches/sales can't be hard-deleted (foreign keys),
+// so they are activated / deactivated instead.
+async function toggleMedicine(id) {
+  const med = medicines.find(m => m.medicine_id == id);
+  if (!med) return;
+  const next = med.status === "Active" ? "Inactive" : "Active";
+  if (next === "Inactive" && !confirm("Deactivate this medicine? It will be hidden from the Active list.")) return;
+  const { error } = await supabaseClient.from("medicines").update({ status: next }).eq("medicine_id", id);
+  if (error) { alert("Could not update status: " + error.message); return; }
   loadMedicines();
 }
 
+// CLEAR button: empties the form fields (keeps edit mode if editing)
+function clearForm() {
+  const id = document.getElementById("medicine-id").value;
+  document.getElementById("medicine-form").reset();
+  document.getElementById("medicine-id").value = id;
+  if (!id) document.getElementById("medicine_code").value = nextMedicineCode();
+}
+
 /* ======================================================================
-   6) INIT
+   5b) VIEW DETAILS
    ====================================================================== */
-loadMedicines();
+async function viewMedicine(id) {
+  const m = medicines.find(x => x.medicine_id == id);
+  if (!m) return;
+
+  const { data: batches, error } = await supabaseClient
+    .from("inventory")
+    .select("batch_number, quantity, expiration_date")
+    .eq("medicine_id", id)
+    .order("expiration_date", { ascending: true });
+  if (error) console.error("Error loading batches:", error.message);
+
+  const row = (label, value) =>
+    `<tr><th style="text-align:left; padding:4px 12px 4px 0;">${label}</th><td>${escapeHtml(String(value ?? "—"))}</td></tr>`;
+
+  document.getElementById("details-title").textContent = m.medicine_name;
+  document.getElementById("details-body").innerHTML = `
+    <table>
+      ${row("Code", m.medicine_code)}
+      ${row("Generic name", m.generic_name)}
+      ${row("Category", m.category_name)}
+      ${row("Dosage form", m.dosage_form)}
+      ${row("Strength", m.strength)}
+      ${row("Unit price", Number(m.unit_price || 0).toFixed(2))}
+      ${row("Reorder level", m.reorder_level)}
+      ${row("Prescription required", m.requires_prescription ? "Yes" : "No")}
+      ${row("Status", m.status)}
+      ${row("Quantity on hand", m.quantity_on_hand)}
+      ${row("Nearest expiry", m.nearest_expiry)}
+    </table>
+    <h3 style="margin:1rem 0 0.4rem;">Batches</h3>
+    ${(batches && batches.length) ? `
+      <table>
+        <thead><tr><th>Batch</th><th>Qty</th><th>Expiry</th></tr></thead>
+        <tbody>${batches.map(b => `<tr><td>${escapeHtml(b.batch_number)}</td><td>${b.quantity}</td><td>${b.expiration_date}</td></tr>`).join("")}</tbody>
+      </table>` : `<p>No stock batches yet.</p>`}
+  `;
+  document.getElementById("details-backdrop").classList.add("open");
+}
+
+function closeDetails() {
+  document.getElementById("details-backdrop").classList.remove("open");
+}
+
+/* ======================================================================
+   6) INIT  (must be signed in: RLS only allows logged-in users)
+   ====================================================================== */
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) { window.location.href = "login-page.html"; return; }
+  await loadCategories();
+  loadMedicines();
+})();
 </script>
 
 </body>

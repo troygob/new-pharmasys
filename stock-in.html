@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Stock-In</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase.js"></script>
+<link rel="stylesheet" href="styles.css">
+
+</head>
+<body>
+
+<div class="app-layout">
+
+<aside class="sidebar" id="sidebar"></aside>
+<script src="../js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Inventory Receiving / Stock-In</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="table-wrap" style="padding:1.5rem; max-width:560px; display:flexbox; justify-content:center; ">
+        <h2 style="margin-top:0;">Stock-In Transaction</h2>
+        <form id="stockin-form" onsubmit="receiveStock(event)">
+          <div class="field">
+            <label for="supplier">Supplier</label>
+            <select id="supplier" required onchange="onSupplierChange()" style="width:100%; padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);"></select>
+          </div>
+          <div class="field">
+            <label for="medicine">Medicine</label>
+            <select id="medicine" required onchange="onMedicineChange()" style="width:100%; padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);"></select>
+            <div id="med-hint" style="font-size:0.8rem; color:var(--color-text-soft); margin-top:0.3rem;"></div>
+          </div>
+          <div class="field">
+            <label for="batch">Batch number</label>
+            <input type="text" id="batch" required maxlength="50" placeholder="e.g. BATCH-00125">
+          </div>
+          <div class="field">
+            <label for="quantity">Quantity</label>
+            <input type="number" id="quantity" required min="1" step="1" placeholder="e.g. 500">
+          </div>
+          <div class="field">
+            <label for="purchase-price">Purchase price (&#8369;)</label>
+            <input type="number" id="purchase-price" required min="0" step="0.01" placeholder="e.g. 3.00">
+          </div>
+          <div class="field">
+            <label for="selling-price">Selling price (&#8369;)</label>
+            <input type="number" id="selling-price" required min="0" step="0.01" placeholder="e.g. 5.00">
+          </div>
+          <div class="field">
+            <label for="expiry">Expiration date</label>
+            <input type="date" id="expiry" required>
+          </div>
+          <div class="modal-actions" style="justify-content:flex-start;">
+            <button type="submit" class="btn-primary" id="submit-btn">Receive stock</button>
+            <button type="reset" class="btn-secondary" onclick="setTimeout(onSupplierChange,0)">Clear</button>
+          </div>
+        </form>
+      </div>
+
+      <h2 style="margin:2rem 0 0.75rem;">Recent stock-ins</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Medicine</th><th>Batch</th><th>Qty received</th><th>Notes</th></tr></thead>
+          <tbody id="recent-body"></tbody>
+        </table>
+        <div class="empty-state" id="recent-empty" style="display:none;">No stock-in transactions yet.</div>
+      </div>
+    </main>
+  </div>
+
+</div>
+<script>
+/* 2) STATE */
+// NOTE: must match a value allowed by the inventory_transactions.transaction_type column.
+// Index page uses "ADJUSTMENT". Change this if your table uses a different name for receiving (e.g. "PURCHASE").
+const STOCK_IN_TYPE = "STOCK_IN";
+
+let suppliers = [];
+let supplierLinks = [];   // medicine_suppliers rows for the chosen supplier
+
+/* 3) DATA LOADING */
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : str;
+  return div.innerHTML;
+}
+function medLabel(m) { return m.medicine_name + (m.strength ? " " + m.strength : ""); }
+
+async function loadSuppliers() {
+  const { data, error } = await supabaseClient
+    .from("suppliers").select("supplier_id, supplier_code, supplier_name")
+    .eq("status", "Active").order("supplier_name");
+  if (error) { alert("Could not load suppliers: " + error.message); return; }
+  suppliers = data;
+  document.getElementById("supplier").innerHTML =
+    suppliers.map(s => `<option value="${s.supplier_id}">${escapeHtml(s.supplier_code + " - " + s.supplier_name)}</option>`).join("");
+  onSupplierChange();
+}
+
+// Step 1 -> 2: only medicines linked to the chosen supplier (Lab 7) are offered
+async function onSupplierChange() {
+  const supId = document.getElementById("supplier").value;
+  const medSel = document.getElementById("medicine");
+  supplierLinks = [];
+  if (!supId) { medSel.innerHTML = ""; return; }
+
+  const { data, error } = await supabaseClient
+    .from("medicine_suppliers")
+    .select("medicine_id, purchase_price, medicines(medicine_code, medicine_name, strength, unit_price, status)")
+    .eq("supplier_id", supId);
+  if (error) { alert("Could not load medicines: " + error.message); return; }
+
+  supplierLinks = (data || []).filter(l => l.medicines && l.medicines.status === "Active");
+  medSel.innerHTML = supplierLinks.length
+    ? supplierLinks.map(l => `<option value="${l.medicine_id}">${escapeHtml(l.medicines.medicine_code + " - " + medLabel(l.medicines))}</option>`).join("")
+    : "";
+  document.getElementById("med-hint").textContent = supplierLinks.length
+    ? "" : "This supplier has no medicines assigned yet. Assign some on the Medicine Suppliers page first.";
+  onMedicineChange();
+}
+
+// Pre-fill prices from the supplier link / medicine record (still editable)
+function onMedicineChange() {
+  const medId = document.getElementById("medicine").value;
+  const link = supplierLinks.find(l => l.medicine_id == medId);
+  if (!link) return;
+  document.getElementById("purchase-price").value = Number(link.purchase_price).toFixed(2);
+  document.getElementById("selling-price").value = Number(link.medicines.unit_price || 0).toFixed(2);
+}
+
+async function loadRecent() {
+  const { data, error } = await supabaseClient
+    .from("inventory_transactions")
+    .select("*, medicines(medicine_name, strength), inventory(batch_number)")
+    .eq("reference_type", "stock_in")
+    .order("transaction_id", { ascending: false })
+    .limit(15);
+  if (error) { console.error("Recent stock-ins:", error.message); return; }
+  document.getElementById("recent-empty").style.display = data.length ? "none" : "block";
+  document.getElementById("recent-body").innerHTML = data.map(r => `
+    <tr>
+      <td>${r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
+      <td>${escapeHtml(r.medicines ? medLabel(r.medicines) : "—")}</td>
+      <td>${escapeHtml(r.inventory?.batch_number || "—")}</td>
+      <td>+${r.quantity_change}</td>
+      <td>${escapeHtml(r.notes || "")}</td>
+    </tr>`).join("");
+}
+
+/* 4) RECEIVE STOCK */
+async function receiveStock(event) {
+  event.preventDefault();
+  const supId = document.getElementById("supplier").value;
+  const medId = document.getElementById("medicine").value;
+  const batch = document.getElementById("batch").value.trim();
+  const qty = parseInt(document.getElementById("quantity").value, 10);
+  const buy = parseFloat(document.getElementById("purchase-price").value);
+  const sell = parseFloat(document.getElementById("selling-price").value);
+  const expiry = document.getElementById("expiry").value;
+
+  if (!supId || !medId) { alert("Select a supplier and a medicine."); return; }
+  if (!batch) { alert("Enter a batch number."); return; }
+  if (!Number.isInteger(qty) || qty <= 0) { alert("Quantity must be a whole number greater than zero."); return; }
+  if (isNaN(buy) || buy < 0 || isNaN(sell) || sell < 0) { alert("Enter valid prices."); return; }
+  if (new Date(expiry) <= new Date()) { alert("Expiration date must be in the future."); return; }
+
+  const btn = document.getElementById("submit-btn");
+  btn.disabled = true;
+  try {
+    const supplier = suppliers.find(s => s.supplier_id == supId);
+
+    // Same medicine + batch number already on the shelf? Add to it instead of creating a duplicate.
+    const { data: existing, error: findErr } = await supabaseClient
+      .from("inventory").select("inventory_id, quantity")
+      .eq("medicine_id", medId).eq("batch_number", batch).maybeSingle();
+    if (findErr) throw findErr;
+
+    let inventoryId;
+    if (existing) {
+      const { error } = await supabaseClient.from("inventory")
+        .update({ quantity: existing.quantity + qty, purchase_price: buy, selling_price: sell, expiration_date: expiry })
+        .eq("inventory_id", existing.inventory_id);
+      if (error) throw error;
+      inventoryId = existing.inventory_id;
+    } else {
+      const { data: created, error } = await supabaseClient.from("inventory")
+        .insert({ medicine_id: medId, batch_number: batch, quantity: qty,
+                  purchase_price: buy, selling_price: sell, expiration_date: expiry })
+        .select("inventory_id").single();
+      if (error) throw error;
+      inventoryId = created.inventory_id;
+    }
+
+    // Audit trail
+    const { error: txErr } = await supabaseClient.from("inventory_transactions").insert({
+      inventory_id: inventoryId,
+      medicine_id: medId,
+      transaction_type: STOCK_IN_TYPE,
+      quantity_change: qty,
+      reference_type: "stock_in",
+      notes: "Received from " + supplier.supplier_name + " (" + supplier.supplier_code + ") @ " + buy.toFixed(2),
+    });
+    if (txErr) throw txErr;
+
+    alert("Stock received: " + qty + " units added.");
+    document.getElementById("stockin-form").reset();
+    onSupplierChange();
+    loadRecent();
+  } catch (err) {
+    alert("Could not receive stock: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* 5) INIT */
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) { window.location.href = "login-page.html"; return; }
+  loadSuppliers();
+  loadRecent();
+})();
+</script>
+
+</body>
+</html>

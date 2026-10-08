@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Medicine Suppliers</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase.js"></script>
+<link rel="stylesheet" href="styles.css">
+
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="../js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Medicine Suppliers</div>
+        </div>
+        <button class="btn-primary" onclick="openModal()">+ Assign supplier</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="stats">
+        <div class="stat-card"><div class="value" id="stat-links">0</div><div class="label">Medicine-supplier links</div></div>
+        <div class="stat-card"><div class="value" id="stat-meds">0</div><div class="label">Medicines with a supplier</div></div>
+        <div class="stat-card"><div class="value" id="stat-sups">0</div><div class="label">Suppliers in use</div></div>
+      </div>
+
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search by medicine, supplier name or supplier code..." oninput="renderTable()">
+        <select id="medicine-filter" onchange="renderTable()" style="padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface);">
+          <option value="">All medicines</option>
+        </select>
+        <select id="supplier-filter" onchange="renderTable()" style="padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface);">
+          <option value="">All suppliers</option>
+        </select>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Medicine</th>
+              <th>Supplier</th>
+              <th>Supplier code</th>
+              <th>Purchase price</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div class="empty-state" id="empty-state" style="display:none;">
+          No links found. Click "Assign supplier" to connect a medicine to a supplier.
+        </div>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<!-- Assign / Edit modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <h2 id="modal-title">Assign supplier</h2>
+    <form id="link-form" onsubmit="saveLink(event)">
+      <input type="hidden" id="link-id">
+      <div class="field">
+        <label for="medicine">Medicine</label>
+        <select id="medicine" required style="width:100%; padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);"></select>
+      </div>
+      <div class="field">
+        <label for="supplier">Supplier</label>
+        <select id="supplier" required style="width:100%; padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);"></select>
+      </div>
+      <div class="field">
+        <label for="purchase-price">Purchase price (&#8369;)</label>
+        <input type="number" id="purchase-price" required min="0" step="0.01" placeholder="e.g. 3.00">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<script>
+/* 2) STATE */
+let links = [];       // medicine_suppliers rows (with medicine + supplier details joined in)
+let medicines = [];   // active medicines
+let suppliers = [];   // active suppliers
+
+/* 3) DATA LOADING */
+async function loadAll() {
+  const [l, m, s] = await Promise.all([
+    supabaseClient.from("medicine_suppliers")
+      .select("medicine_supplier_id, medicine_id, supplier_id, purchase_price, medicines(medicine_code, medicine_name, strength), suppliers(supplier_code, supplier_name, status)")
+      .order("medicine_supplier_id", { ascending: false }),
+    supabaseClient.from("medicines").select("medicine_id, medicine_code, medicine_name, strength").eq("status", "Active").order("medicine_name"),
+    supabaseClient.from("suppliers").select("supplier_id, supplier_code, supplier_name").eq("status", "Active").order("supplier_name"),
+  ]);
+  if (l.error) { alert("Could not load links: " + l.error.message); return; }
+  if (m.error) console.error(m.error.message);
+  if (s.error) console.error(s.error.message);
+
+  links = l.data; medicines = m.data || []; suppliers = s.data || [];
+  fillFilters();
+  renderTable();
+  renderStats();
+}
+
+function medLabel(m) { return m.medicine_name + (m.strength ? " " + m.strength : ""); }
+
+function fillFilters() {
+  const medSel = document.getElementById("medicine-filter"), supSel = document.getElementById("supplier-filter");
+  const medVal = medSel.value, supVal = supSel.value;
+  medSel.innerHTML = '<option value="">All medicines</option>' +
+    medicines.map(m => `<option value="${m.medicine_id}">${escapeHtml(medLabel(m))}</option>`).join("");
+  supSel.innerHTML = '<option value="">All suppliers</option>' +
+    suppliers.map(s => `<option value="${s.supplier_id}">${escapeHtml(s.supplier_name)}</option>`).join("");
+  medSel.value = medVal; supSel.value = supVal;
+}
+
+/* 4) RENDERING */
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : str;
+  return div.innerHTML;
+}
+
+function renderTable() {
+  const q = document.getElementById("search").value.toLowerCase().trim();
+  const medId = document.getElementById("medicine-filter").value;
+  const supId = document.getElementById("supplier-filter").value;
+
+  const filtered = links.filter(l => {
+    if (medId && l.medicine_id != medId) return false;
+    if (supId && l.supplier_id != supId) return false;
+    const hay = [l.medicines?.medicine_name, l.medicines?.medicine_code, l.suppliers?.supplier_name, l.suppliers?.supplier_code];
+    return hay.some(v => (v || "").toLowerCase().includes(q));
+  });
+
+  document.getElementById("empty-state").style.display = filtered.length ? "none" : "block";
+  document.getElementById("table-body").innerHTML = filtered.map(l => {
+    const inactive = l.suppliers?.status === "Inactive";
+    return `
+    <tr>
+      <td>${escapeHtml(l.medicines ? medLabel(l.medicines) : "—")}</td>
+      <td>${escapeHtml(l.suppliers?.supplier_name || "—")}
+          ${inactive ? '<span class="badge badge-danger">Inactive</span>' : ""}</td>
+      <td>${escapeHtml(l.suppliers?.supplier_code || "—")}</td>
+      <td>&#8369;${Number(l.purchase_price).toFixed(2)}</td>
+      <td>
+        <button class="btn-secondary btn-small" onclick="editLink(${l.medicine_supplier_id})">Edit price</button>
+        <button class="btn-danger btn-small" onclick="removeLink(${l.medicine_supplier_id})">Remove</button>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function renderStats() {
+  document.getElementById("stat-links").textContent = links.length;
+  document.getElementById("stat-meds").textContent = new Set(links.map(l => l.medicine_id)).size;
+  document.getElementById("stat-sups").textContent = new Set(links.map(l => l.supplier_id)).size;
+}
+
+/* 5) MODAL / FORM HANDLING */
+function fillSelects(selectedMed, selectedSup) {
+  document.getElementById("medicine").innerHTML =
+    medicines.map(m => `<option value="${m.medicine_id}">${escapeHtml(m.medicine_code + " - " + medLabel(m))}</option>`).join("");
+  document.getElementById("supplier").innerHTML =
+    suppliers.map(s => `<option value="${s.supplier_id}">${escapeHtml(s.supplier_code + " - " + s.supplier_name)}</option>`).join("");
+  if (selectedMed) document.getElementById("medicine").value = selectedMed;
+  if (selectedSup) document.getElementById("supplier").value = selectedSup;
+}
+
+function openModal() {
+  document.getElementById("modal-title").textContent = "Assign supplier";
+  document.getElementById("link-form").reset();
+  document.getElementById("link-id").value = "";
+  fillSelects();
+  // Pre-select whatever the filters currently show, to save clicks
+  const fm = document.getElementById("medicine-filter").value, fs = document.getElementById("supplier-filter").value;
+  if (fm) document.getElementById("medicine").value = fm;
+  if (fs) document.getElementById("supplier").value = fs;
+  document.getElementById("medicine").disabled = false;
+  document.getElementById("supplier").disabled = false;
+  document.getElementById("modal-backdrop").classList.add("open");
+}
+
+function closeModal() {
+  document.getElementById("modal-backdrop").classList.remove("open");
+}
+
+function editLink(id) {
+  const l = links.find(x => x.medicine_supplier_id == id);
+  if (!l) return;
+  document.getElementById("modal-title").textContent = "Edit purchase price";
+  document.getElementById("link-id").value = id;
+  fillSelects(l.medicine_id, l.supplier_id);
+  // Only the price is editable; to change the pair, remove it and assign again
+  document.getElementById("medicine").disabled = true;
+  document.getElementById("supplier").disabled = true;
+  document.getElementById("purchase-price").value = Number(l.purchase_price).toFixed(2);
+  document.getElementById("modal-backdrop").classList.add("open");
+}
+
+async function saveLink(event) {
+  event.preventDefault();
+  const id = document.getElementById("link-id").value;
+  const price = parseFloat(document.getElementById("purchase-price").value);
+  if (isNaN(price) || price < 0) { alert("Enter a valid purchase price."); return; }
+
+  const { error } = id
+    ? await supabaseClient.from("medicine_suppliers").update({ purchase_price: price }).eq("medicine_supplier_id", id)
+    : await supabaseClient.from("medicine_suppliers").insert({
+        medicine_id: document.getElementById("medicine").value,
+        supplier_id: document.getElementById("supplier").value,
+        purchase_price: price,
+      });
+
+  if (error) {
+    alert(error.code === "23505"
+      ? "That supplier is already assigned to this medicine. Use \"Edit price\" instead."
+      : "Could not save: " + error.message);
+    return;
+  }
+  closeModal();
+  loadAll();
+}
+
+async function removeLink(id) {
+  const l = links.find(x => x.medicine_supplier_id == id);
+  if (!l || !confirm("Remove " + l.suppliers?.supplier_name + " as a supplier of " + (l.medicines ? medLabel(l.medicines) : "this medicine") + "?")) return;
+  const { error } = await supabaseClient.from("medicine_suppliers").delete().eq("medicine_supplier_id", id);
+  if (error) { alert("Could not remove: " + error.message); return; }
+  loadAll();
+}
+
+/* 6) INIT */
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) { window.location.href = "login-page.html"; return; }
+  loadAll();
+})();
+</script>
+
+</body>
+</html>

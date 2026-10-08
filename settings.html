@@ -7,30 +7,22 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase.js"></script>
 <link rel="stylesheet" href="styles.css">
 
 </head>
 <body>
 
 <div class="app-layout">
-
-  <aside class="sidebar">
-    <div class="sidebar-header"> <h2>Pharmacy Management System</h2> </div>
-    <nav class="sidebar-nav">
-      <a href="index.html" class="sidebar-link active">Inventory</a>
-      <a href="sales.html" class="sidebar-link">Sales</a>
-      <a href="settings.html" class="sidebar-link">Settings</a>
-      <a href="login-page.html" class="sidebar-link">Logout</a>
-    </nav>
-    
-  </aside>
+<aside class="sidebar" id="sidebar"></aside>
+<script src="../js/sidebar.js"></script>
 
   <div class="main-content">
     <header>
       <div class="inner">
         <div>
           <h1>Pharmacy Manager</h1>
-          <div class="subtitle">Page : Inventory</div>
+          <div class="subtitle">Page : SETTINGS</div>
         </div>
         <button class="btn-primary" onclick="openModal()">+ Add medicine</button>
       </div>
@@ -40,41 +32,7 @@
       <div class="stats">
         <div class="stat-card">
           <div class="value" id="stat-total">0</div>
-          <div class="label">Medicines in stock</div>
-        </div>
-        <div class="stat-card">
-          <div class="value" id="stat-low">0</div>
-          <div class="label">Low stock (&le; 10 units)</div>
-        </div>
-        <div class="stat-card">
-          <div class="value" id="stat-expiring">0</div>
-          <div class="label">Expiring within 30 days</div>
-        </div>
-      </div>
-
-      <div class="toolbar">
-        <input type="search" id="search" placeholder="Search by name or category..." oninput="renderTable()">
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Category</th>
-              <th>Quantity</th>
-              <th>Price</th>
-              <th>Expiry</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="table-body">
-            <!-- rows injected by JS -->
-          </tbody>
-        </table>
-        <div class="empty-state" id="empty-state" style="display:none;">
-          No medicines yet. Click "Add medicine" to create your first entry.
+          <div class="label">WIP</div>
         </div>
       </div>
     </main>
@@ -116,173 +74,7 @@
   </div>
 </div>
 
-<script>
-/* ======================================================================
-   1) SUPABASE CONNECTION
-   ====================================================================== */
-const SUPABASE_URL = "https://xmzspbblssnmcvccftgu.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhtenNwYmJsc3NubWN2Y2NmdGd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5ODU4MjksImV4cCI6MjEwNDU2MTgyOX0.KLnTNPlmf5nLVVN6WBslLoEYyUEtzKclpgVvO6YHpsY";
 
-const supabaseClient = (SUPABASE_URL.startsWith("http"))
-  ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null;
-
-if (!supabaseClient) {
-  document.getElementById("connection-banner").style.display = "block";
-}
-
-/* ======================================================================
-   2) STATE
-   ====================================================================== */
-let medicines = [];
-
-/* ======================================================================
-   3) DATA LOADING
-   ====================================================================== */
-async function loadMedicines() {
-  if (!supabaseClient) return;
-
-  const { data, error } = await supabaseClient
-    .from("medicines")
-    .select("*")
-    .order("name", { ascending: true });
-
-  if (error) {
-    console.error("Error loading medicines:", error.message);
-    return;
-  }
-  medicines = data;
-  renderTable();
-  renderStats();
-}
-
-/* ======================================================================
-   4) RENDERING
-   ====================================================================== */
-function daysUntil(dateStr) {
-  if (!dateStr) return Infinity;
-  const diffMs = new Date(dateStr) - new Date();
-  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-}
-
-function statusBadge(med) {
-  const days = daysUntil(med.expiry_date);
-  if (days < 0) return `<span class="badge badge-danger">Expired</span>`;
-  if (days <= 30) return `<span class="badge badge-warning">Expiring soon</span>`;
-  if (med.quantity <= 10) return `<span class="badge badge-danger">Low stock</span>`;
-  return `<span class="badge badge-success">In stock</span>`;
-}
-
-function renderTable() {
-  const query = document.getElementById("search").value.toLowerCase();
-  const tbody = document.getElementById("table-body");
-  const filtered = medicines.filter(m =>
-    m.name.toLowerCase().includes(query) ||
-    (m.category || "").toLowerCase().includes(query)
-  );
-
-  document.getElementById("empty-state").style.display = filtered.length ? "none" : "block";
-
-  tbody.innerHTML = filtered.map(m => `
-    <tr>
-      <td>${escapeHtml(m.name)}</td>
-      <td>${escapeHtml(m.category || "—")}</td>
-      <td>${m.quantity}</td>
-      <td>${Number(m.price || 0).toFixed(2)}</td>
-      <td>${m.expiry_date || "—"}</td>
-      <td>${statusBadge(m)}</td>
-      <td>
-        <button class="btn-secondary btn-small" onclick="editMedicine('${m.id}')">Edit</button>
-        <button class="btn-danger btn-small" onclick="deleteMedicine('${m.id}')">Delete</button>
-      </td>
-    </tr>
-  `).join("");
-}
-
-function renderStats() {
-  document.getElementById("stat-total").textContent = medicines.length;
-  document.getElementById("stat-low").textContent =
-    medicines.filter(m => m.quantity <= 10).length;
-  document.getElementById("stat-expiring").textContent =
-    medicines.filter(m => daysUntil(m.expiry_date) >= 0 && daysUntil(m.expiry_date) <= 30).length;
-}
-
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-/* ======================================================================
-   5) MODAL / FORM HANDLING
-   ====================================================================== */
-function openModal() {
-  document.getElementById("modal-title").textContent = "Add medicine";
-  document.getElementById("medicine-form").reset();
-  document.getElementById("medicine-id").value = "";
-  document.getElementById("modal-backdrop").classList.add("open");
-}
-
-function closeModal() {
-  document.getElementById("modal-backdrop").classList.remove("open");
-}
-
-function editMedicine(id) {
-  const med = medicines.find(m => m.id == id);
-  if (!med) return;
-  document.getElementById("modal-title").textContent = "Edit medicine";
-  document.getElementById("medicine-id").value = med.id;
-  document.getElementById("name").value = med.name;
-  document.getElementById("category").value = med.category || "";
-  document.getElementById("quantity").value = med.quantity;
-  document.getElementById("price").value = med.price;
-  document.getElementById("expiry_date").value = med.expiry_date || "";
-  document.getElementById("modal-backdrop").classList.add("open");
-}
-
-async function saveMedicine(event) {
-  event.preventDefault();
-  if (!supabaseClient) {
-    alert("Connect Supabase first — see the setup guide.");
-    return;
-  }
-
-  const id = document.getElementById("medicine-id").value;
-  const record = {
-    name: document.getElementById("name").value.trim(),
-    category: document.getElementById("category").value.trim(),
-    quantity: parseInt(document.getElementById("quantity").value, 10),
-    price: parseFloat(document.getElementById("price").value),
-    expiry_date: document.getElementById("expiry_date").value || null,
-  };
-
-  const { error } = id
-    ? await supabaseClient.from("medicines").update(record).eq("id", id)
-    : await supabaseClient.from("medicines").insert(record);
-
-  if (error) {
-    alert("Could not save: " + error.message);
-    return;
-  }
-  closeModal();
-  loadMedicines();
-}
-
-async function deleteMedicine(id) {
-  if (!confirm("Delete this medicine?")) return;
-  const { error } = await supabaseClient.from("medicines").delete().eq("id", id);
-  if (error) {
-    alert("Could not delete: " + error.message);
-    return;
-  }
-  loadMedicines();
-}
-
-/* ======================================================================
-   6) INIT
-   ====================================================================== */
-loadMedicines();
-</script>
 
 </body>
 </html>

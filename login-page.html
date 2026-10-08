@@ -7,6 +7,7 @@
 
   <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase.js"></script>
 <link rel="stylesheet" href="styles.css">
 
 </head>
@@ -32,12 +33,8 @@
     </div>
   </div>
 </main>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-  const SUPABASE_URL = "https://xmzspbblssnmcvccftgu.supabase.co";
-  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhtenNwYmJsc3NubWN2Y2NmdGd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5ODU4MjksImV4cCI6MjEwNDU2MTgyOX0.KLnTNPlmf5nLVVN6WBslLoEYyUEtzKclpgVvO6YHpsY";
-  const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+<script>
   document.getElementById("login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const email = document.getElementById("email").value;
