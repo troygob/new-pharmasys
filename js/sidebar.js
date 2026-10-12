@@ -25,7 +25,7 @@
 
   document.getElementById("sidebar").innerHTML = `
     <div class="sidebar-header">
-      <img src="../assets/medicine.png" alt="Pharmacy Management System" class="sidebar-logo">
+      <img src="./assets/medicine.png" alt="Pharmacy Management System" class="sidebar-logo">
     </div>
     <nav class="sidebar-nav">
       ${nav}
