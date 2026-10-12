@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Users</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase.js"></script>
+<script src="../js/auth.js"></script>
+<link rel="stylesheet" href="styles.css">
+
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="../js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Users</div>
+        </div>
+        <button class="btn-primary" onclick="openAddModal()">+ Add user</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="stats">
+        <div class="stat-card"><div class="value" id="stat-total">0</div><div class="label">Users</div></div>
+        <div class="stat-card"><div class="value" id="stat-active">0</div><div class="label">Active</div></div>
+        <div class="stat-card"><div class="value" id="stat-admins">0</div><div class="label">Admins</div></div>
+      </div>
+
+      <div class="table-wrap" style="padding:1rem 1.25rem; margin-bottom:1rem; font-size:0.9rem;">
+        <strong>Adding a user:</strong> click <em>+ Add user</em>, fill in the details and give them a temporary password.
+        Logins created any other way (for example in the Supabase dashboard) show up here as
+        <strong>Inactive</strong> &mdash; click <em>Edit</em> to set their role and activate them.
+      </div>
+
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search by email, name or role..." oninput="renderTable()">
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div class="empty-state" id="empty-state" style="display:none;">No users found.</div>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<!-- Add user modal -->
+<div class="modal-backdrop" id="add-backdrop">
+  <div class="modal">
+    <h2>Add user</h2>
+    <form id="add-form" onsubmit="createUser(event)">
+      <div class="field">
+        <label for="add-name">Full name</label>
+        <input type="text" id="add-name" required maxlength="100" placeholder="e.g. Maria Santos">
+      </div>
+      <div class="field">
+        <label for="add-email">Email</label>
+        <input type="email" id="add-email" required placeholder="name@example.com">
+      </div>
+      <div class="field">
+        <label for="add-role">Role</label>
+        <select id="add-role" style="width:100%; padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);">
+          <option value="Cashier">Cashier</option>
+          <option value="Pharmacist">Pharmacist</option>
+          <option value="Inventory Staff">Inventory Staff</option>
+          <option value="Manager">Manager</option>
+          <option value="Admin">Admin</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="add-password">Temporary password</label>
+        <input type="text" id="add-password" required minlength="8" placeholder="At least 8 characters">
+      </div>
+      <div id="add-message" style="font-size:0.9rem; margin-bottom:1rem;"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="closeAddModal()">Cancel</button>
+        <button type="submit" class="btn-primary" id="add-btn">Create user</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <h2>Edit user</h2>
+    <form id="user-form" onsubmit="saveUser(event)">
+      <input type="hidden" id="user-id">
+      <div class="field">
+        <label for="user-email">Email</label>
+        <input type="text" id="user-email" disabled>
+      </div>
+      <div class="field">
+        <label for="user-name">Full name</label>
+        <input type="text" id="user-name" required maxlength="100" placeholder="e.g. Maria Santos">
+      </div>
+      <div class="field">
+        <label for="user-role">Role</label>
+        <select id="user-role" style="width:100%; padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);">
+          <option value="Admin">Admin</option>
+          <option value="Pharmacist">Pharmacist</option>
+          <option value="Cashier">Cashier</option>
+          <option value="Inventory Staff">Inventory Staff</option>
+          <option value="Manager">Manager</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="user-status">Status</label>
+        <select id="user-status" style="width:100%; padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);">
+          <option value="Active">Active</option>
+          <option value="Inactive">Inactive</option>
+        </select>
+      </div>
+      <div id="self-note" style="display:none; font-size:0.85rem; margin-bottom:1rem;">
+        This is your own account, so you cannot change your role or status (to avoid locking yourself out).
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+let profiles = [];
+let me = null;
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : str;
+  return div.innerHTML;
+}
+
+async function loadUsers() {
+  const { data, error } = await supabaseClient
+    .from("users").select("*").order("email", { ascending: true });
+  if (error) { alert("Could not load users: " + error.message); return; }
+  profiles = data;
+  renderTable();
+  renderStats();
+}
+
+function renderTable() {
+  const q = document.getElementById("search").value.toLowerCase().trim();
+  const filtered = profiles.filter(p =>
+    [p.email, p.full_name, p.role].some(v => (v || "").toLowerCase().includes(q)));
+
+  document.getElementById("empty-state").style.display = filtered.length ? "none" : "block";
+  document.getElementById("table-body").innerHTML = filtered.map(p => `
+    <tr>
+      <td>${escapeHtml(p.email)}${p.user_id === me.id ? " <em>(you)</em>" : ""}</td>
+      <td>${escapeHtml(p.full_name || "—")}</td>
+      <td>${escapeHtml(p.role)}</td>
+      <td><span class="badge ${p.status === "Active" ? "badge-success" : "badge-danger"}">${p.status}</span></td>
+      <td><button class="btn-secondary btn-small" onclick="editUser('${p.user_id}')">Edit</button></td>
+    </tr>`).join("");
+}
+
+function renderStats() {
+  document.getElementById("stat-total").textContent  = profiles.length;
+  document.getElementById("stat-active").textContent = profiles.filter(p => p.status === "Active").length;
+  document.getElementById("stat-admins").textContent = profiles.filter(p => p.role === "Admin" && p.status === "Active").length;
+}
+
+function editUser(id) {
+  const p = profiles.find(x => x.user_id === id);
+  if (!p) return;
+  const isSelf = p.user_id === me.id;
+  document.getElementById("user-id").value = p.user_id;
+  document.getElementById("user-email").value = p.email || "";
+  document.getElementById("user-name").value = p.full_name || "";
+  document.getElementById("user-role").value = p.role;
+  document.getElementById("user-status").value = p.status;
+  document.getElementById("user-role").disabled = isSelf;
+  document.getElementById("user-status").disabled = isSelf;
+  document.getElementById("self-note").style.display = isSelf ? "block" : "none";
+  document.getElementById("modal-backdrop").classList.add("open");
+}
+
+function closeModal() {
+  document.getElementById("modal-backdrop").classList.remove("open");
+}
+
+function openAddModal() {
+  document.getElementById("add-form").reset();
+  document.getElementById("add-message").textContent = "";
+  document.getElementById("add-backdrop").classList.add("open");
+}
+
+function closeAddModal() {
+  document.getElementById("add-backdrop").classList.remove("open");
+}
+
+async function createUser(event) {
+  event.preventDefault();
+  const msg = document.getElementById("add-message");
+  const btn = document.getElementById("add-btn");
+  const full_name = document.getElementById("add-name").value.trim();
+  const email     = document.getElementById("add-email").value.trim().toLowerCase();
+  const role      = document.getElementById("add-role").value;
+  const password  = document.getElementById("add-password").value;
+
+  msg.style.color = "var(--color-text)";
+  msg.textContent = "Creating...";
+  btn.disabled = true;
+
+  try {
+    // A separate, throw-away client: signing up with the normal client would
+    // log YOU out and sign you in as the new user.
+    const tmp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "tmp-signup" },
+    });
+    const { data, error } = await tmp.auth.signUp({ email, password, options: { data: { full_name } } });
+    if (error) throw error;
+    if (!data.user || (data.user.identities && data.user.identities.length === 0)) {
+      throw new Error("That email is already registered.");
+    }
+
+    // The database trigger created the users row as Inactive. Set the real role and activate it.
+    const { error: upErr } = await supabaseClient.from("users")
+      .update({ full_name, role, status: "Active", updated_at: new Date().toISOString() })
+      .eq("user_id", data.user.id);
+    if (upErr) throw upErr;
+
+    closeAddModal();
+    await loadUsers();
+    alert("User created. Give " + email + " the temporary password so they can sign in and change it in Settings." +
+          (data.session ? "" : "\n\nNote: Supabase may still require them to confirm their email first."));
+  } catch (err) {
+    msg.style.color = "var(--color-danger)";
+    msg.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveUser(event) {
+  event.preventDefault();
+  const id = document.getElementById("user-id").value;
+  const isSelf = id === me.id;
+
+  const record = { full_name: document.getElementById("user-name").value.trim(), updated_at: new Date().toISOString() };
+  if (!isSelf) {
+    record.role   = document.getElementById("user-role").value;
+    record.status = document.getElementById("user-status").value;
+  }
+
+  const { error } = await supabaseClient.from("users").update(record).eq("user_id", id);
+  if (error) { alert("Could not save: " + error.message); return; }
+  closeModal();
+  loadUsers();
+}
+
+(async () => {
+  me = await getProfile();
+  if (!me) return;                 // guardPage() handles the redirect
+  loadUsers();
+})();
+</script>
+
+</body>
+</html>

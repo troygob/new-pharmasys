@@ -3,78 +3,85 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pharmacy Manager</title>
+<title>Pharmacy Manager - Settings</title>
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../js/supabase.js"></script>
+<script src="../js/auth.js"></script>
 <link rel="stylesheet" href="styles.css">
 
 </head>
 <body>
 
 <div class="app-layout">
-<aside class="sidebar" id="sidebar"></aside>
-<script src="../js/sidebar.js"></script>
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="../js/sidebar.js"></script>
 
   <div class="main-content">
     <header>
       <div class="inner">
         <div>
           <h1>Pharmacy Manager</h1>
-          <div class="subtitle">Page : SETTINGS</div>
+          <div class="subtitle">Page : Settings</div>
         </div>
-        <button class="btn-primary" onclick="openModal()">+ Add medicine</button>
       </div>
     </header>
 
     <main>
-      <div class="stats">
-        <div class="stat-card">
-          <div class="value" id="stat-total">0</div>
-          <div class="label">WIP</div>
-        </div>
+      <div class="table-wrap" style="padding:1.5rem; max-width:520px;">
+        <h2 style="margin-top:0;">My account</h2>
+        <div class="field"><label>Email</label><div id="acc-email">—</div></div>
+        <div class="field"><label>Name</label><div id="acc-name">—</div></div>
+        <div class="field"><label>Role</label><div id="acc-role">—</div></div>
+      </div>
+
+      <div class="table-wrap" style="padding:1.5rem; max-width:520px; margin-top:1rem;">
+        <h2 style="margin-top:0;">Change password</h2>
+        <form id="pw-form" onsubmit="changePassword(event)">
+          <div class="field">
+            <label for="new-password">New password</label>
+            <input type="password" id="new-password" required minlength="8" placeholder="At least 8 characters">
+          </div>
+          <div class="field">
+            <label for="confirm-password">Confirm new password</label>
+            <input type="password" id="confirm-password" required minlength="8">
+          </div>
+          <div id="pw-message" style="font-size:0.9rem; margin-bottom:1rem;"></div>
+          <button type="submit" class="btn-primary">Update password</button>
+        </form>
       </div>
     </main>
   </div>
 
 </div>
 
-<!-- Add / Edit modal -->
-<div class="modal-backdrop" id="modal-backdrop">
-  <div class="modal">
-    <h2 id="modal-title">Add medicine</h2>
-    <form id="medicine-form" onsubmit="saveMedicine(event)">
-      <input type="hidden" id="medicine-id">
-      <div class="field">
-        <label for="name">Name</label>
-        <input type="text" id="name" required placeholder="e.g. Amoxicillin 500mg">
-      </div>
-      <div class="field">
-        <label for="category">Category</label>
-        <input type="text" id="category" placeholder="e.g. Antibiotic">
-      </div>
-      <div class="field">
-        <label for="quantity">Quantity</label>
-        <input type="number" id="quantity" required min="0" value="0">
-      </div>
-      <div class="field">
-        <label for="price">Price</label>
-        <input type="number" id="price" step="0.01" min="0" value="0">
-      </div>
-      <div class="field">
-        <label for="expiry_date">Expiry date</label>
-        <input type="date" id="expiry_date">
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
-        <button type="submit" class="btn-primary">Save</button>
-      </div>
-    </form>
-  </div>
-</div>
+<script>
+async function changePassword(event) {
+  event.preventDefault();
+  const msg = document.getElementById("pw-message");
+  const a = document.getElementById("new-password").value;
+  const b = document.getElementById("confirm-password").value;
 
+  if (a !== b) { msg.style.color = "var(--color-danger)"; msg.textContent = "The two passwords do not match."; return; }
 
+  const { error } = await supabaseClient.auth.updateUser({ password: a });
+  if (error) { msg.style.color = "var(--color-danger)"; msg.textContent = error.message; return; }
+
+  msg.style.color = "var(--color-success)";
+  msg.textContent = "Password updated.";
+  document.getElementById("pw-form").reset();
+}
+
+(async () => {
+  const me = await getProfile();
+  if (!me) return;
+  document.getElementById("acc-email").textContent = me.email;
+  document.getElementById("acc-name").textContent  = me.full_name || "—";
+  document.getElementById("acc-role").textContent  = me.role || "No role";
+})();
+</script>
 
 </body>
 </html>

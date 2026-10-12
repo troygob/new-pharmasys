@@ -8,6 +8,7 @@
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../js/supabase.js"></script>
+<script src="../js/auth.js"></script>
 <link rel="stylesheet" href="styles.css">
 
 </head>
@@ -25,7 +26,7 @@
           <h1>Pharmacy Manager</h1>
           <div class="subtitle">Page : Inventory</div>
         </div>
-        <button class="btn-primary" onclick="openModal()">+ Add medicine</button>
+        <button class="btn-primary" data-hide="cashier inventory_staff manager" onclick="openModal()">+ Add medicine</button>
       </div>
     </header>
 
@@ -239,8 +240,8 @@ function renderTable() {
       <td>${statusBadge(m)}</td>
       <td>
         <button class="btn-secondary btn-small" onclick="viewMedicine(${m.medicine_id})">View</button>
-        <button class="btn-secondary btn-small" onclick="editMedicine(${m.medicine_id})">Edit</button>
-        <button class="${m.status === "Active" ? "btn-danger" : "btn-secondary"} btn-small" onclick="toggleMedicine(${m.medicine_id})">${m.status === "Active" ? "Deactivate" : "Activate"}</button>
+        <button class="btn-secondary btn-small" data-hide="cashier inventory_staff manager" onclick="editMedicine(${m.medicine_id})">Edit</button>
+        <button class="${m.status === "Active" ? "btn-danger" : "btn-secondary"} btn-small" data-hide="cashier inventory_staff manager" onclick="toggleMedicine(${m.medicine_id})">${m.status === "Active" ? "Deactivate" : "Activate"}</button>
       </td>
     </tr>
   `).join("");
@@ -342,6 +343,7 @@ async function saveMedicine(event) {
         transaction_type: "ADJUSTMENT",
         quantity_change:  qty,
         reference_type:   "manual",
+        user_id:          (await getProfile()).id,
         notes:            "Opening stock added from Inventory page",
       });
     }

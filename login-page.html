@@ -3,11 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Login</title>
+<title>Pharmacy Manager - Login</title>
 
-  <!-- Supabase client library, loaded from a CDN -->
+<!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../js/supabase.js"></script>
+<script src="../js/auth.js"></script>
 <link rel="stylesheet" href="styles.css">
 
 </head>
@@ -28,29 +29,75 @@
           <input type="password" id="password" required placeholder="********">
         </div>
         <div id="login-error" class="login-error"></div>
-        <button type="submit" class="btn-primary login-submit">Sign In</button>
+        <button type="submit" class="btn-primary login-submit" id="login-btn">Sign In</button>
       </form>
+
+      <div style="margin-top:1rem; text-align:center;">
+        <div style="font-size:0.85rem; margin-bottom:0.5rem;">Quick login (demo only &mdash; remove before deployment)</div>
+        <button type="button" class="btn-secondary" onclick="quickLogin('admin@gmail.com', 'admin')">Admin</button>
+        <button type="button" class="btn-secondary" onclick="quickLogin('cashier@gmail.com', 'cashier123')">Cashier</button>
+      </div>
     </div>
   </div>
 </main>
 
 <script>
-  document.getElementById("login-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const email = document.getElementById("email").value;
-    const password = document.getElementById("password").value;
+  const MAX_ATTEMPTS = 5;      // wrong passwords allowed in a row
+  const LOCK_SECONDS = 30;     // how long the form locks afterwards
+  let failedAttempts = 0;
+
+  function lockForm() {
+    const btn = document.getElementById("login-btn");
     const errorBox = document.getElementById("login-error");
+    let left = LOCK_SECONDS;
+    btn.disabled = true;
+    const timer = setInterval(() => {
+      errorBox.textContent = "Too many failed attempts. Try again in " + left + "s.";
+      if (left-- <= 0) {
+        clearInterval(timer);
+        btn.disabled = false;
+        failedAttempts = 0;
+        errorBox.textContent = "";
+      }
+    }, 1000);
+  }
 
-    const { error } = await supabaseClient.auth.signInWithPassword({  email, password, });
+  async function login(email, password) {
+    const errorBox = document.getElementById("login-error");
+    errorBox.textContent = "";
 
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
     if (error) {
+      failedAttempts++;
       errorBox.textContent = error.message;
+      if (failedAttempts >= MAX_ATTEMPTS) lockForm();
       return;
     }
 
-      window.location.href = "index.html";
-  });
-</script>
+    // Signed in. Check the account is usable, then open the page for their role.
+    const me = await getProfile(true);
+    if (!me || me.status !== "Active") {
+      await supabaseClient.auth.signOut();
+      errorBox.textContent = "This account is inactive. Contact an administrator.";
+      return;
+    }
+    if (!me.role) {
+      window.location.href = "denied.html?reason=norole";
+      return;
+    }
+    window.location.href = LANDING_PAGE[me.role] || "index.html";
+  }
 
+  document.getElementById("login-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    login(document.getElementById("email").value, document.getElementById("password").value);
+  });
+
+  function quickLogin(email, password) {
+    document.getElementById("email").value = email;
+    document.getElementById("password").value = password;
+    login(email, password);
+  }
+</script>
 </body>
 </html>

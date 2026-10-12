@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Access denied</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase.js"></script>
+<script src="../js/auth.js"></script>
+<link rel="stylesheet" href="styles.css">
+
+</head>
+<body>
+
+<main>
+  <div class="login-container">
+    <div class="login-card" style="text-align:center;">
+      <h1 id="denied-title">Access denied</h1>
+      <p class="login-subtitle" id="denied-text">You do not have permission to open this page.</p>
+      <div style="margin-top:1.5rem;">
+        <a href="login-page.html" class="btn-primary" id="go-btn" style="display:none; padding:0.6rem 1.1rem; border-radius:var(--radius-sm); text-decoration:none;">Go to my page</a>
+        <button type="button" class="btn-secondary" onclick="logout()">Log out</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  const reason = new URLSearchParams(location.search).get("reason");
+  const messages = {
+    forbidden: ["Access denied",       "Your role does not have permission to open that page."],
+    norole:    ["Account not set up", "Your login has no user record yet. Ask an administrator to check your account on the Users page."],
+    inactive:  ["Account inactive",    "Your account has been deactivated. Contact an administrator."],
+  };
+  const [title, text] = messages[reason] || messages.forbidden;
+  document.getElementById("denied-title").textContent = title;
+  document.getElementById("denied-text").textContent = text;
+
+  // Only offer "Go to my page" when the account is actually usable
+  (async () => {
+    const me = await getProfile();
+    if (me && me.role && me.status === "Active") {
+      const btn = document.getElementById("go-btn");
+      btn.href = LANDING_PAGE[me.role] || "index.html";
+      btn.style.display = "inline-block";
+    }
+  })();
+</script>
+</body>
+</html>

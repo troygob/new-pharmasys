@@ -8,6 +8,7 @@
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="../js/supabase.js"></script>
+<script src="../js/auth.js"></script>
 <link rel="stylesheet" href="styles.css">
 
 </head>
@@ -73,8 +74,9 @@
 
         <!-- RIGHT: recent stock-ins -->
         <div>
-          <h2 style="margin-top:0;">Recent stock-ins</h2>
-          <div class="table-wrap" style="overflow-x:auto;">
+          
+          <div class="table-wrap" style="overflow-x:auto; padding:1.5rem;">
+            <h2 style="margin-top:0;">Recent stock-ins</h2>
             <table>
               <thead><tr><th>Date</th><th>Medicine</th><th>Batch</th><th>Qty received</th><th>Notes</th></tr></thead>
               <tbody id="recent-body"></tbody>
@@ -90,9 +92,9 @@
 </div>
 <script>
 /* 2) STATE */
-// NOTE: must match a value allowed by the inventory_transactions.transaction_type column.
-// Index page uses "ADJUSTMENT". Change this if your table uses a different name for receiving (e.g. "PURCHASE").
-const STOCK_IN_TYPE = "STOCK_IN";
+// inventory_transactions.transaction_type only allows: PURCHASE, SALE, ADJUSTMENT, RETURN, EXPIRED.
+// Receiving stock from a supplier is a PURCHASE.
+const STOCK_IN_TYPE = "PURCHASE";
 
 let suppliers = [];
 let supplierLinks = [];   // medicine_suppliers rows for the chosen supplier
@@ -151,7 +153,7 @@ async function loadRecent() {
   const { data, error } = await supabaseClient
     .from("inventory_transactions")
     .select("*, medicines(medicine_name, strength), inventory(batch_number)")
-    .eq("reference_type", "stock_in")
+    .in("reference_type", ["purchase", "stock_in"])
     .order("transaction_id", { ascending: false })
     .limit(15);
   if (error) { console.error("Recent stock-ins:", error.message); return; }
@@ -185,10 +187,34 @@ async function receiveStock(event) {
 
   const btn = document.getElementById("submit-btn");
   btn.disabled = true;
+  let stage = "start";
+  let purchaseId = null;
   try {
+    const me = await getProfile();
     const supplier = suppliers.find(s => s.supplier_id == supId);
 
-    // Same medicine + batch number already on the shelf? Add to it instead of creating a duplicate.
+    // 1) Purchase record (who we bought from, when, how much)
+    stage = "purchase";
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const purchaseNo = "PO-" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) +
+                       "-" + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+    const { data: purchase, error: pErr } = await supabaseClient.from("purchases")
+      .insert({ purchase_no: purchaseNo, supplier_id: supId, user_id: me.id,
+                total_amount: qty * buy, status: "Received",
+                notes: "Received via Stock-In page" })
+      .select("purchase_id").single();
+    if (pErr) throw pErr;
+    purchaseId = purchase.purchase_id;
+
+    stage = "purchase_item";
+    const { error: piErr } = await supabaseClient.from("purchase_items")
+      .insert({ purchase_id: purchaseId, medicine_id: medId, batch_number: batch,
+                quantity: qty, unit_cost: buy, expiration_date: expiry });
+    if (piErr) throw piErr;
+
+    // 2) Inventory: same medicine + batch already on the shelf? Add to it instead of duplicating.
+    stage = "inventory";
     const { data: existing, error: findErr } = await supabaseClient
       .from("inventory").select("inventory_id, quantity")
       .eq("medicine_id", medId).eq("batch_number", batch).maybeSingle();
@@ -210,23 +236,34 @@ async function receiveStock(event) {
       inventoryId = created.inventory_id;
     }
 
-    // Audit trail
+    // 3) Audit trail
+    stage = "audit";
     const { error: txErr } = await supabaseClient.from("inventory_transactions").insert({
       inventory_id: inventoryId,
       medicine_id: medId,
       transaction_type: STOCK_IN_TYPE,
       quantity_change: qty,
-      reference_type: "stock_in",
-      notes: "Received from " + supplier.supplier_name + " (" + supplier.supplier_code + ") @ " + buy.toFixed(2),
+      reference_type: "purchase",
+      reference_id: purchaseId,
+      user_id: me.id,
+      notes: "Received from " + supplier.supplier_name + " (" + supplier.supplier_code + ") @ " + buy.toFixed(2) + " - " + purchaseNo,
     });
     if (txErr) throw txErr;
 
-    alert("Stock received: " + qty + " units added.");
+    alert("Stock received: " + qty + " units added (" + purchaseNo + ").");
     document.getElementById("stockin-form").reset();
     onSupplierChange();
     loadRecent();
   } catch (err) {
-    alert("Could not receive stock: " + err.message);
+    // Nothing reached the shelf yet -> cancel the purchase record so it is not left half-finished
+    if (purchaseId && (stage === "purchase_item" || stage === "inventory")) {
+      await supabaseClient.from("purchases")
+        .update({ status: "Cancelled", notes: "Failed at step '" + stage + "': " + err.message })
+        .eq("purchase_id", purchaseId);
+    }
+    alert(stage === "audit"
+      ? "Stock was added, but the audit log row failed: " + err.message
+      : "Could not receive stock (step: " + stage + "): " + err.message);
   } finally {
     btn.disabled = false;
   }
