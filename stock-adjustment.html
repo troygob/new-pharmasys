@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Stock Adjustment</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../js/supabase.js"></script>
+<script src="../js/auth.js"></script>
+<link rel="stylesheet" href="styles.css">
+
+<style>
+  /* Page-specific helpers (shared look comes from styles.css) */
+  .field select,
+  .field textarea {
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: 0.95rem;
+    font-family: inherit;
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+  .field textarea { resize: vertical; min-height: 3.2rem; }
+  .field .hint { font-size: 0.8rem; color: var(--color-text-soft); margin-top: 0.3rem; }
+  .adj-preview {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: #F0FAFB;
+    padding: 0.8rem 1rem;
+    margin-bottom: 1rem;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    text-align: center;
+  }
+  .adj-preview .num { font-family: var(--font-head); font-size: 1.5rem; }
+  .adj-preview .cap { font-size: 0.78rem; color: var(--color-text-soft); }
+  .adj-preview .bad { color: var(--color-danger); }
+  .filters { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center; }
+  .filters select, .filters input[type="date"] {
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    font-family: inherit;
+    font-size: 0.9rem;
+  }
+  .filters input[type="search"] {
+    flex: 1; min-width: 180px;
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    background: var(--color-surface);
+  }
+  .qty-plus  { color: var(--color-success); font-weight: 600; }
+  .qty-minus { color: var(--color-danger);  font-weight: 600; }
+  .cell-notes { max-width: 340px; color: var(--color-text-soft); }
+</style>
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="../js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Stock Adjustment &amp; Inventory Transactions</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="stats">
+        <div class="stat-card">
+          <div class="value" id="stat-today">0</div>
+          <div class="label">Transactions today</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-in">0</div>
+          <div class="label">Units added today</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-out">0</div>
+          <div class="label">Units removed today</div>
+        </div>
+      </div>
+
+      <div class="stockin-layout">
+
+        <!-- LEFT: adjustment form (read-only roles such as Manager don't see it) -->
+        <div class="table-wrap" style="padding:1.5rem;" data-hide="manager">
+          <h2 style="margin-top:0;">Record adjustment</h2>
+          <form id="adj-form" onsubmit="saveAdjustment(event)">
+
+            <div class="field">
+              <label for="type">Transaction type</label>
+              <select id="type" onchange="onTypeChange()"></select>
+              <div class="hint" id="type-hint"></div>
+            </div>
+
+            <div class="field">
+              <label for="med-search">Medicine</label>
+              <input type="search" id="med-search" placeholder="Filter by code or name..." oninput="renderMedicineOptions()" style="margin-bottom:0.4rem;">
+              <select id="medicine" required onchange="onMedicineChange()"></select>
+            </div>
+
+            <div class="field">
+              <label for="batch">Batch</label>
+              <select id="batch" required onchange="updatePreview()"></select>
+              <div class="hint" id="batch-hint"></div>
+            </div>
+
+            <div class="field">
+              <label for="quantity" id="qty-label">Quantity</label>
+              <input type="number" id="quantity" required step="1" placeholder="e.g. 5" oninput="updatePreview()">
+              <div class="hint" id="qty-hint"></div>
+            </div>
+
+            <div class="adj-preview" aria-live="polite">
+              <div><div class="num" id="pv-current">&mdash;</div><div class="cap">Current quantity</div></div>
+              <div><div class="num" id="pv-change">&mdash;</div><div class="cap">Change</div></div>
+              <div><div class="num" id="pv-new">&mdash;</div><div class="cap">New quantity</div></div>
+            </div>
+
+            <div class="field">
+              <label for="reason">Reason</label>
+              <select id="reason" required onchange="updatePreview()"></select>
+            </div>
+
+            <div class="field">
+              <label for="remarks" id="remarks-label">Remarks (optional)</label>
+              <textarea id="remarks" maxlength="200" placeholder="Add details, e.g. who found it, count sheet no."></textarea>
+            </div>
+
+            <div class="modal-actions" style="justify-content:flex-start;">
+              <button type="submit" class="btn-primary" id="submit-btn">Save adjustment</button>
+              <button type="button" class="btn-secondary" onclick="resetForm()">Clear</button>
+            </div>
+            <div class="hint" style="margin-top:0.8rem;">
+              To receive new stock from a supplier, use the Stock In page. Those transactions appear in the history on this page as well.
+            </div>
+          </form>
+        </div>
+
+        <!-- RIGHT: transaction history -->
+        <div>
+          <div class="table-wrap" style="overflow-x:auto; padding:1.5rem;">
+            <h2 style="margin-top:0;">Inventory transaction history</h2>
+
+            <div class="filters">
+              <input type="search" id="h-search" placeholder="Search medicine, batch or notes..." oninput="renderHistory()">
+              <select id="h-type" onchange="renderHistory()"></select>
+              <label style="font-size:0.82rem; color:var(--color-text-soft);">From
+                <input type="date" id="h-from" onchange="renderHistory()">
+              </label>
+              <label style="font-size:0.82rem; color:var(--color-text-soft);">To
+                <input type="date" id="h-to" onchange="renderHistory()">
+              </label>
+            </div>
+
+            <table>
+              <thead>
+                <tr><th>Date</th><th>Type</th><th>Medicine</th><th>Batch</th><th>Change</th><th>Notes</th></tr>
+              </thead>
+              <tbody id="history-body"></tbody>
+            </table>
+            <div class="empty-state" id="history-empty" style="display:none;">No inventory transactions match.</div>
+            <div class="hint" id="history-count" style="margin-top:0.75rem; font-size:0.8rem; color:var(--color-text-soft);"></div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<script>
+/* 1) CONFIG
+   inventory_transactions.transaction_type only allows: PURCHASE, SALE, ADJUSTMENT, RETURN, EXPIRED.
+   The lab's six transaction types are mapped onto those, and the lab type is also written at the
+   start of the notes as a tag, e.g. "[Damaged] Broken or spilled. Qty 100 -> 95", so history can show it. */
+const TYPES = {
+  "Stock-Out":  { db: "ADJUSTMENT", sign: -1, hint: "Removes units from a batch (for example transfers or internal use).",
+                  reasons: ["Transferred to another branch", "Returned to supplier", "Used in store / sample", "Other"] },
+  "Adjustment": { db: "ADJUSTMENT", sign:  0, hint: "Corrects the count. Enter a positive number to add or a negative number to remove.",
+                  reasons: ["Stock count correction", "Data entry error", "Found stock", "Lost / missing", "Other"] },
+  "Damaged":    { db: "ADJUSTMENT", sign: -1, hint: "Removes damaged units from a batch.",
+                  reasons: ["Broken or spilled", "Packaging damaged", "Storage problem (heat / moisture)", "Other"] },
+  "Expired":    { db: "EXPIRED",    sign: -1, hint: "Removes expired units from a batch so they cannot be sold.",
+                  reasons: ["Past expiration date", "Recalled by manufacturer", "Other"] },
+  "Returned":   { db: "RETURN",     sign:  1, hint: "Adds units back to a batch (for example a customer return).",
+                  reasons: ["Customer return", "Wrong item dispensed", "Other"] },
+};
+// Types shown in the history filter (Stock-In and Sale come from other pages)
+const HISTORY_LABELS = ["Stock-In", "Sale", "Stock-Out", "Adjustment", "Damaged", "Expired", "Returned"];
+const DB_LABEL = { PURCHASE: "Stock-In", SALE: "Sale", ADJUSTMENT: "Adjustment", RETURN: "Returned", EXPIRED: "Expired" };
+const TAG_RE = /^\[(Stock-Out|Adjustment|Damaged|Expired|Returned)\]\s*/;
+
+/* 2) STATE */
+let medicines = [];
+let batches = [];        // batches of the selected medicine
+let history = [];
+
+/* 3) HELPERS */
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : str;
+  return div.innerHTML;
+}
+function medLabel(m) { return m.medicine_name + (m.strength ? " " + m.strength : ""); }
+function todayStr() {
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function isExpired(dateStr) { return !!dateStr && dateStr < todayStr(); }
+function selectedType() { return document.getElementById("type").value; }
+function selectedBatch() {
+  const id = document.getElementById("batch").value;
+  return batches.find(b => String(b.inventory_id) === String(id)) || null;
+}
+// Signed change implied by the form (null when the input is not usable)
+function enteredChange() {
+  const raw = document.getElementById("quantity").value;
+  if (raw === "" ) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n === 0) return null;
+  const cfg = TYPES[selectedType()];
+  if (cfg.sign === 0) return n;              // Adjustment: user chooses + or -
+  if (n < 0) return null;                    // other types: enter a positive number
+  return cfg.sign * n;
+}
+
+/* 4) FORM */
+function initTypes() {
+  document.getElementById("type").innerHTML =
+    Object.keys(TYPES).map(t => `<option value="${t}">${t}</option>`).join("");
+  document.getElementById("h-type").innerHTML =
+    `<option value="">All types</option>` + HISTORY_LABELS.map(t => `<option value="${t}">${t}</option>`).join("");
+  onTypeChange();
+}
+
+function onTypeChange() {
+  const t = selectedType();
+  const cfg = TYPES[t];
+  document.getElementById("type-hint").textContent = cfg.hint;
+  document.getElementById("reason").innerHTML =
+    cfg.reasons.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join("");
+
+  const q = document.getElementById("quantity");
+  if (cfg.sign === 0) {
+    document.getElementById("qty-label").textContent = "Adjustment (+ or -)";
+    q.placeholder = "e.g. -5 or 12";
+    q.removeAttribute("min");
+    document.getElementById("qty-hint").textContent = "Use a minus sign to remove stock.";
+  } else {
+    document.getElementById("qty-label").textContent = cfg.sign < 0 ? "Quantity to remove" : "Quantity to add";
+    q.placeholder = "e.g. 5";
+    q.min = "1";
+    document.getElementById("qty-hint").textContent = "Enter a whole number greater than zero.";
+  }
+  updatePreview();
+}
+
+function renderMedicineOptions() {
+  const q = document.getElementById("med-search").value.trim().toLowerCase();
+  const sel = document.getElementById("medicine");
+  const keep = sel.value;
+  const list = medicines.filter(m =>
+    !q || m.medicine_name.toLowerCase().includes(q) ||
+    (m.medicine_code || "").toLowerCase().includes(q) ||
+    (m.generic_name || "").toLowerCase().includes(q));
+  sel.innerHTML = list.length
+    ? list.map(m => `<option value="${m.medicine_id}">${escapeHtml((m.medicine_code ? m.medicine_code + " - " : "") + medLabel(m) + (m.status === "Active" ? "" : " (inactive)"))}</option>`).join("")
+    : `<option value="">No medicine found</option>`;
+  if (list.some(m => String(m.medicine_id) === keep)) sel.value = keep;
+  onMedicineChange();
+}
+
+async function onMedicineChange() {
+  const medId = document.getElementById("medicine").value;
+  const sel = document.getElementById("batch");
+  batches = [];
+  if (!medId) { sel.innerHTML = ""; document.getElementById("batch-hint").textContent = ""; updatePreview(); return; }
+
+  const { data, error } = await supabaseClient
+    .from("inventory")
+    .select("inventory_id, batch_number, quantity, expiration_date")
+    .eq("medicine_id", medId)
+    .order("expiration_date", { ascending: true });
+  if (error) { alert("Could not load batches: " + error.message); return; }
+
+  // Ignore the answer if the user already picked another medicine while this was loading
+  if (document.getElementById("medicine").value !== medId) return;
+
+  batches = data || [];
+  sel.innerHTML = batches.length
+    ? batches.map(b => `<option value="${b.inventory_id}">${escapeHtml(b.batch_number)} - qty ${b.quantity} - exp ${b.expiration_date}${isExpired(b.expiration_date) ? " (expired)" : ""}</option>`).join("")
+    : "";
+  document.getElementById("batch-hint").textContent = batches.length
+    ? "" : "This medicine has no batches yet. Receive stock on the Stock In page first.";
+  updatePreview();
+}
+
+function updatePreview() {
+  const b = selectedBatch();
+  const change = enteredChange();
+  const cur = document.getElementById("pv-current");
+  const chg = document.getElementById("pv-change");
+  const nw  = document.getElementById("pv-new");
+  cur.textContent = b ? b.quantity : "\u2014";
+  chg.textContent = change == null ? "\u2014" : (change > 0 ? "+" + change : String(change));
+  nw.classList.remove("bad");
+  if (b && change != null) {
+    const next = b.quantity + change;
+    nw.textContent = next;
+    if (next < 0) nw.classList.add("bad");
+  } else {
+    nw.textContent = "\u2014";
+  }
+}
+
+function resetForm() {
+  document.getElementById("quantity").value = "";
+  document.getElementById("remarks").value = "";
+  document.getElementById("reason").selectedIndex = 0;
+  updatePreview();
+}
+
+/* 5) SAVE ADJUSTMENT
+   Steps: validate -> re-read the batch -> update quantity (only if nobody changed it) -> write audit row.
+   If the audit row fails the quantity is put back, so inventory and history never disagree. */
+async function saveAdjustment(event) {
+  event.preventDefault();
+  const type = selectedType();
+  const cfg = TYPES[type];
+  const batch = selectedBatch();
+  const medId = document.getElementById("medicine").value;
+  const reason = document.getElementById("reason").value;
+  const remarks = document.getElementById("remarks").value.trim();
+
+  if (!medId || !batch) { alert("Select a medicine and a batch."); return; }
+  const change = enteredChange();
+  if (change == null) {
+    alert(cfg.sign === 0
+      ? "Enter a whole number other than zero (use a minus sign to remove stock)."
+      : "Quantity must be a whole number greater than zero.");
+    return;
+  }
+  if (!reason) { alert("Select a reason."); return; }
+  if (reason === "Other" && !remarks) { alert("Add a remark that explains the reason."); return; }
+  if (batch.quantity + change < 0) {
+    alert("Cannot remove " + Math.abs(change) + " units. Batch " + batch.batch_number + " only has " + batch.quantity + ".");
+    return;
+  }
+  if (type === "Expired" && !isExpired(batch.expiration_date) &&
+      !confirm("Batch " + batch.batch_number + " expires on " + batch.expiration_date + " and has not expired yet. Record it as expired anyway?")) return;
+  if (type === "Returned" && isExpired(batch.expiration_date) &&
+      !confirm("Batch " + batch.batch_number + " is already expired. Returned units will still not be sellable. Continue?")) return;
+
+  const med = medicines.find(m => String(m.medicine_id) === String(medId));
+  const summary = type + ": " + (change > 0 ? "+" : "") + change + " x " + medLabel(med) +
+                  " (batch " + batch.batch_number + ")\nReason: " + reason +
+                  "\nQuantity " + batch.quantity + " -> " + (batch.quantity + change);
+  if (!confirm("Save this transaction?\n\n" + summary)) return;
+
+  const btn = document.getElementById("submit-btn");
+  btn.disabled = true;
+  let quantityChanged = false;
+  let oldQty = batch.quantity, newQty = batch.quantity + change;
+  try {
+    const me = await getProfile();
+
+    // Re-read so the calculation uses the real current quantity
+    const { data: fresh, error: readErr } = await supabaseClient
+      .from("inventory").select("quantity").eq("inventory_id", batch.inventory_id).single();
+    if (readErr) throw readErr;
+    oldQty = fresh.quantity;
+    newQty = oldQty + change;
+    if (newQty < 0) throw new Error("Stock changed in the meantime: only " + oldQty + " units are left in this batch.");
+
+    // Update only if the quantity is still what we read (guards against two people editing at once)
+    const { data: updated, error: upErr } = await supabaseClient
+      .from("inventory").update({ quantity: newQty })
+      .eq("inventory_id", batch.inventory_id).eq("quantity", oldQty)
+      .select("inventory_id");
+    if (upErr) throw upErr;
+    if (!updated || !updated.length) throw new Error("Stock was changed by someone else. Reload the batch and try again.");
+    quantityChanged = true;
+
+    const notes = "[" + type + "] " + reason + (remarks ? " - " + remarks : "") +
+                  ". Qty " + oldQty + " -> " + newQty;
+    const { error: txErr } = await supabaseClient.from("inventory_transactions").insert({
+      inventory_id:     batch.inventory_id,
+      medicine_id:      medId,
+      transaction_type: cfg.db,
+      quantity_change:  change,
+      reference_type:   "manual",
+      user_id:          me.id,
+      notes:            notes,
+    });
+    if (txErr) {
+      // Undo the quantity change so the audit trail stays complete
+      await supabaseClient.from("inventory").update({ quantity: oldQty })
+        .eq("inventory_id", batch.inventory_id).eq("quantity", newQty);
+      quantityChanged = false;
+      throw txErr;
+    }
+
+    alert("Saved. " + medLabel(med) + " batch " + batch.batch_number + ": " + oldQty + " -> " + newQty + ".");
+    resetForm();
+    await onMedicineChange();
+    loadHistory();
+  } catch (err) {
+    alert("Could not save the adjustment: " + err.message +
+          (quantityChanged ? "\n\nThe stock quantity was changed but the history row was not saved. Check this batch." : ""));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* 6) HISTORY */
+function labelFor(r) {
+  const m = TAG_RE.exec(r.notes || "");
+  if (m) return m[1];
+  return DB_LABEL[r.transaction_type] || r.transaction_type;
+}
+function cleanNotes(r) { return (r.notes || "").replace(TAG_RE, ""); }
+function typeBadge(label) {
+  const cls = ["Stock-In", "Returned"].includes(label) ? "badge-success"
+            : ["Damaged", "Expired"].includes(label)   ? "badge-danger"
+            : label === "Sale"                         ? "badge-warning" : "badge-warning";
+  return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+}
+
+async function loadHistory() {
+  const { data, error } = await supabaseClient
+    .from("inventory_transactions")
+    .select("transaction_id, transaction_type, quantity_change, notes, created_at, medicines(medicine_code, medicine_name, strength), inventory(batch_number)")
+    .order("transaction_id", { ascending: false })
+    .limit(500);
+  if (error) { console.error("History:", error.message); alert("Could not load history: " + error.message); return; }
+  history = data || [];
+  renderHistory();
+  renderStats();
+}
+
+function renderHistory() {
+  const q = document.getElementById("h-search").value.trim().toLowerCase();
+  const type = document.getElementById("h-type").value;
+  const from = document.getElementById("h-from").value;
+  const to = document.getElementById("h-to").value;
+
+  const rows = history.filter(r => {
+    const label = labelFor(r);
+    if (type && label !== type) return false;
+    const day = r.created_at ? new Date(r.created_at) : null;
+    if (day) {
+      const p = (n) => String(n).padStart(2, "0");
+      const ds = day.getFullYear() + "-" + p(day.getMonth() + 1) + "-" + p(day.getDate());
+      if (from && ds < from) return false;
+      if (to && ds > to) return false;
+    }
+    if (!q) return true;
+    const hay = [r.medicines ? medLabel(r.medicines) + " " + (r.medicines.medicine_code || "") : "",
+                 r.inventory?.batch_number || "", cleanNotes(r), label].join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+
+  document.getElementById("history-empty").style.display = rows.length ? "none" : "block";
+  document.getElementById("history-count").textContent =
+    history.length ? "Showing " + rows.length + " of the latest " + history.length + " transactions." : "";
+  document.getElementById("history-body").innerHTML = rows.map(r => {
+    const c = r.quantity_change;
+    return `
+    <tr>
+      <td>${r.created_at ? new Date(r.created_at).toLocaleString() : "\u2014"}</td>
+      <td>${typeBadge(labelFor(r))}</td>
+      <td>${escapeHtml(r.medicines ? medLabel(r.medicines) : "\u2014")}</td>
+      <td>${escapeHtml(r.inventory?.batch_number || "\u2014")}</td>
+      <td class="${c > 0 ? "qty-plus" : "qty-minus"}">${c > 0 ? "+" : ""}${c}</td>
+      <td class="cell-notes">${escapeHtml(cleanNotes(r))}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderStats() {
+  const today = todayStr();
+  const p = (n) => String(n).padStart(2, "0");
+  const todays = history.filter(r => {
+    if (!r.created_at) return false;
+    const d = new Date(r.created_at);
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) === today;
+  });
+  document.getElementById("stat-today").textContent = todays.length;
+  document.getElementById("stat-in").textContent  = todays.filter(r => r.quantity_change > 0).reduce((s, r) => s + r.quantity_change, 0);
+  document.getElementById("stat-out").textContent = Math.abs(todays.filter(r => r.quantity_change < 0).reduce((s, r) => s + r.quantity_change, 0));
+}
+
+/* 7) INIT */
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) { window.location.href = "login-page.html"; return; }
+
+  initTypes();
+  loadHistory();
+
+  const { data, error } = await supabaseClient
+    .from("medicines")
+    .select("medicine_id, medicine_code, medicine_name, generic_name, strength, status")
+    .order("medicine_name");
+  if (error) { console.error("Medicines:", error.message); return; }
+  medicines = data || [];
+  renderMedicineOptions();
+})();
+</script>
+
+</body>
+</html>
