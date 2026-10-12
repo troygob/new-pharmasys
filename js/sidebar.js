@@ -7,6 +7,7 @@
     { href: "medicine-suppliers.html", label: "Medicine Supply" },
     { href: "stock-in.html",           label: "Stock In"        },
     { href: "stock-adjustment.html",   label: "Stock Adjustment" },
+    { href: "prescriptions.html",      label: "Prescriptions"   },
     { href: "sales.html",              label: "Sales"           },
     { href: "users.html",              label: "Users"           },
     { href: "settings.html",           label: "Settings"        },
