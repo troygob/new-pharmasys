@@ -7,8 +7,8 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="../js/supabase.js"></script>
-<script src="../js/auth.js"></script>
+<script src="./js/supabase.js"></script>
+<script src="./js/auth.js"></script>
 <link rel="stylesheet" href="styles.css">
 
 </head>
@@ -17,7 +17,7 @@
 <div class="app-layout">
 
 <aside class="sidebar" id="sidebar"></aside>
-<script src="../js/sidebar.js"></script>
+<script src="./js/sidebar.js"></script>
 
   <div class="main-content">
     <header>
@@ -44,6 +44,10 @@
               <label for="medicine">Medicine</label>
               <select id="medicine" required onchange="onMedicineChange()" style="width:100%; padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);"></select>
               <div id="med-hint" style="font-size:0.8rem; color:var(--color-text-soft); margin-top:0.3rem;"></div>
+              <label style="display:flex; align-items:center; gap:0.4rem; margin-top:0.5rem; font-size:0.8rem; color:var(--color-text-soft); cursor:pointer;">
+                <input type="checkbox" id="show-all" onchange="onSupplierChange()" style="width:auto;">
+                Show all active medicines, not only those assigned to this supplier
+              </label>
             </div>
             <div class="field">
               <label for="batch">Batch number</label>
@@ -118,34 +122,79 @@ async function loadSuppliers() {
   onSupplierChange();
 }
 
-// Step 1 -> 2: only medicines linked to the chosen supplier (Lab 7) are offered
+// Step 1 -> 2: medicines linked to the chosen supplier (Lab 7) are offered.
+// The checkbox lets staff pick any active medicine when a supplier has nothing assigned yet.
+function setMedicineOptions(html, enabled) {
+  const sel = document.getElementById("medicine");
+  sel.innerHTML = html;
+  sel.disabled = !enabled;      // a disabled select can't open an empty pop-up
+}
+
 async function onSupplierChange() {
   const supId = document.getElementById("supplier").value;
-  const medSel = document.getElementById("medicine");
+  const hint = document.getElementById("med-hint");
+  const showAll = document.getElementById("show-all").checked;
   supplierLinks = [];
-  if (!supId) { medSel.innerHTML = ""; return; }
+  hint.textContent = "";
 
+  if (!supId) { setMedicineOptions('<option value="">Select a supplier first</option>', false); return; }
+  setMedicineOptions('<option value="">Loading medicines...</option>', false);
+
+  // 1) medicines assigned to this supplier
   const { data, error } = await supabaseClient
     .from("medicine_suppliers")
     .select("medicine_id, purchase_price, medicines(medicine_code, medicine_name, strength, unit_price, status)")
     .eq("supplier_id", supId);
-  if (error) { alert("Could not load medicines: " + error.message); return; }
+  if (document.getElementById("supplier").value !== supId) return;   // user picked another supplier meanwhile
+  if (error) {
+    setMedicineOptions('<option value="">Could not load medicines</option>', false);
+    hint.textContent = "Could not load medicines: " + error.message;
+    return;
+  }
+  const linked = (data || []).filter(l => l.medicines && l.medicines.status === "Active");
 
-  supplierLinks = (data || []).filter(l => l.medicines && l.medicines.status === "Active");
-  medSel.innerHTML = supplierLinks.length
-    ? supplierLinks.map(l => `<option value="${l.medicine_id}">${escapeHtml(l.medicines.medicine_code + " - " + medLabel(l.medicines))}</option>`).join("")
-    : "";
-  document.getElementById("med-hint").textContent = supplierLinks.length
-    ? "" : "This supplier has no medicines assigned yet. Assign some on the Medicine Suppliers page first.";
+  // 2) optionally every active medicine (assigned ones keep their agreed purchase price)
+  if (showAll) {
+    const { data: all, error: allErr } = await supabaseClient
+      .from("medicines")
+      .select("medicine_id, medicine_code, medicine_name, strength, unit_price, status")
+      .eq("status", "Active").order("medicine_name");
+    if (document.getElementById("supplier").value !== supId) return;
+    if (allErr) {
+      setMedicineOptions('<option value="">Could not load medicines</option>', false);
+      hint.textContent = "Could not load medicines: " + allErr.message;
+      return;
+    }
+    supplierLinks = (all || []).map(m => {
+      const l = linked.find(x => x.medicine_id === m.medicine_id);
+      return { medicine_id: m.medicine_id, purchase_price: l ? l.purchase_price : null, assigned: !!l, medicines: m };
+    });
+  } else {
+    supplierLinks = linked.map(l => ({ ...l, assigned: true }));
+  }
+
+  if (!supplierLinks.length) {
+    setMedicineOptions('<option value="">No medicines available</option>', false);
+    hint.innerHTML = showAll
+      ? "There are no active medicines yet. Add some on the Inventory page first."
+      : 'No medicines are assigned to this supplier yet. Assign some on the <a href="medicine-suppliers.html">Medicine Supply</a> page, or tick the box below to pick any medicine.';
+    onMedicineChange();
+    return;
+  }
+
+  setMedicineOptions(
+    supplierLinks.map(l => `<option value="${l.medicine_id}">${escapeHtml(l.medicines.medicine_code + " - " + medLabel(l.medicines) + (showAll && !l.assigned ? " (not assigned to this supplier)" : ""))}</option>`).join(""),
+    true);
   onMedicineChange();
 }
 
 // Pre-fill prices from the supplier link / medicine record (still editable)
 function onMedicineChange() {
   const medId = document.getElementById("medicine").value;
-  const link = supplierLinks.find(l => l.medicine_id == medId);
+  const link = supplierLinks.find(l => String(l.medicine_id) === String(medId));
   if (!link) return;
-  document.getElementById("purchase-price").value = Number(link.purchase_price).toFixed(2);
+  document.getElementById("purchase-price").value =
+    link.purchase_price == null ? "" : Number(link.purchase_price).toFixed(2);
   document.getElementById("selling-price").value = Number(link.medicines.unit_price || 0).toFixed(2);
 }
 
