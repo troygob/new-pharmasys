@@ -15,6 +15,7 @@ const PAGE_ACCESS = {
   "medicine-suppliers.html": ["Admin", "Inventory Staff"],
   "stock-in.html":           ["Admin", "Inventory Staff"],
   "stock-adjustment.html":   ["Admin", "Pharmacist", "Inventory Staff", "Manager"],  // Manager: history only (form is hidden)
+  "prescriptions.html":      ["Admin", "Pharmacist", "Manager"],           // Manager: list only (form is hidden)
   "sales.html":              ["Admin", "Cashier", "Pharmacist", "Manager"],
   "users.html":              ["Admin"],
   "settings.html":           ALL_ROLES,                                   // own account + password

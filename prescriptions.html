@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Prescriptions</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./js/supabase.js"></script>
+<script src="./js/auth.js"></script>
+<link rel="stylesheet" href="styles.css">
+
+<style>
+  .rx-input, .rx-select {
+    width: 100%; padding: 0.6rem 0.9rem; font: inherit;
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    background: var(--color-surface); color: var(--color-text);
+  }
+  .rx-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
+  .rx-section { margin: 1.4rem 0 0.8rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+  .rx-section h3 { margin: 0 0 0.8rem; font-size: 1rem; }
+  .rx-hint { font-size: 0.8rem; color: var(--color-text-soft); margin-top: 0.3rem; }
+  .rx-detail { margin-top: 1rem; padding: 1.25rem 1.5rem; }
+  .rx-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0 0 1rem; font-size: 0.9rem; }
+  .rx-detail dt { color: var(--color-text-soft); }
+  .rx-detail dd { margin: 0; }
+  @media (max-width: 600px) { .rx-row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="./js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Prescription Registration</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="stockin-layout">
+
+        <!-- LEFT: registration form (hidden from Manager, who can only read) -->
+        <div class="table-wrap" style="padding:1.5rem;" data-hide="manager">
+          <h2 style="margin-top:0;">Prescription</h2>
+
+          <div class="rx-row">
+            <div class="field">
+              <label for="rx-no">Prescription no.</label>
+              <input type="text" id="rx-no" readonly>
+            </div>
+            <div class="field">
+              <label for="rx-date">Date</label>
+              <input type="date" id="rx-date">
+            </div>
+          </div>
+
+          <div class="rx-row">
+            <div class="field">
+              <label for="patient">Patient</label>
+              <input type="text" id="patient" maxlength="120" placeholder="e.g. Juan Dela Cruz">
+            </div>
+            <div class="field">
+              <label for="patient-contact">Patient contact (optional)</label>
+              <input type="text" id="patient-contact" maxlength="40" placeholder="e.g. 09123456789">
+            </div>
+          </div>
+
+          <div class="rx-row">
+            <div class="field">
+              <label for="prescriber">Prescriber</label>
+              <input type="text" id="prescriber" maxlength="120" placeholder="e.g. Dr. Maria Santos">
+            </div>
+            <div class="field">
+              <label for="license">Prescriber license no. (optional)</label>
+              <input type="text" id="license" maxlength="40" placeholder="e.g. PRC-0123456">
+            </div>
+          </div>
+
+          <div class="rx-section">
+            <h3>Medicine</h3>
+            <div class="field">
+              <label for="med-search">Search medicine</label>
+              <input type="search" id="med-search" placeholder="Code, name, generic name or dosage form..." oninput="renderMedOptions()">
+            </div>
+            <div class="field">
+              <select id="med-select" class="rx-select"></select>
+              <div class="rx-hint" id="med-hint"></div>
+            </div>
+            <div class="rx-row">
+              <div class="field">
+                <label for="item-qty">Quantity</label>
+                <input type="number" id="item-qty" min="1" step="1" placeholder="e.g. 20">
+              </div>
+              <div class="field">
+                <label for="item-instr">Instructions</label>
+                <input type="text" id="item-instr" maxlength="200" value="Take as directed">
+              </div>
+            </div>
+            <button type="button" class="btn-secondary" onclick="addItem()">Add medicine</button>
+          </div>
+
+          <div class="rx-section">
+            <h3>Medicines on this prescription</h3>
+            <table>
+              <thead><tr><th>Medicine</th><th>Qty</th><th>Instructions</th><th></th></tr></thead>
+              <tbody id="items-body"></tbody>
+            </table>
+            <div class="empty-state" id="items-empty" style="padding:1.5rem 1rem;">No medicines added yet.</div>
+          </div>
+
+          <div class="modal-actions" style="justify-content:flex-start;">
+            <button type="button" class="btn-primary" id="save-btn" onclick="savePrescription()">Save prescription</button>
+            <button type="button" class="btn-secondary" onclick="clearForm()">Clear</button>
+          </div>
+        </div>
+
+        <!-- RIGHT: recent prescriptions -->
+        <div>
+          <div class="table-wrap" style="overflow-x:auto; padding:1.5rem;">
+            <h2 style="margin-top:0;">Recent prescriptions</h2>
+            <div class="toolbar" style="margin-bottom:1rem;">
+              <input type="search" id="list-search" placeholder="Search by Rx no. or patient..." oninput="renderList()">
+            </div>
+            <table>
+              <thead><tr><th>Rx no.</th><th>Date</th><th>Patient</th><th>Items</th><th>Status</th><th></th></tr></thead>
+              <tbody id="list-body"></tbody>
+            </table>
+            <div class="empty-state" id="list-empty" style="display:none;">No prescriptions recorded yet.</div>
+          </div>
+
+          <div class="table-wrap rx-detail" id="detail" style="display:none;"></div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<script>
+/* ======================================================================
+   1) STATE
+   ====================================================================== */
+const PREFIX = "RX-";
+
+let medicines = [];     // active medicines for the picker
+let items = [];         // lines on the prescription being built: { medicine_id, label, quantity, instructions }
+let prescriptions = []; // recent prescriptions for the list
+let isManager = false;
+
+/* ======================================================================
+   2) HELPERS
+   ====================================================================== */
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : str;
+  return div.innerHTML;
+}
+function todayStr() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+function medLabel(m) {
+  return m.medicine_name + (m.strength ? " " + m.strength : "") + (m.dosage_form ? " (" + m.dosage_form + ")" : "");
+}
+function statusBadge(status) {
+  const cls = status === "Fully Dispensed" ? "badge-success"
+            : status === "Cancelled"       ? "badge-danger"
+            : "badge-warning";
+  return `<span class="badge ${cls}">${escapeHtml(status)}</span>`;
+}
+
+/* ======================================================================
+   3) PRESCRIPTION NUMBER  (RX-00001, RX-00002, ...)
+   ====================================================================== */
+async function nextRxNo() {
+  const { data, error } = await supabaseClient
+    .from("prescriptions").select("prescription_no")
+    .like("prescription_no", PREFIX + "%")
+    .order("prescription_no", { ascending: false }).limit(1);
+  if (error) { console.error("Could not read last Rx number:", error.message); return PREFIX + "00001"; }
+  const last = data && data[0] ? parseInt(String(data[0].prescription_no).replace(/\D/g, ""), 10) : 0;
+  return PREFIX + String((last || 0) + 1).padStart(5, "0");
+}
+async function refreshRxNo() {
+  document.getElementById("rx-no").value = await nextRxNo();
+}
+
+/* ======================================================================
+   4) MEDICINE PICKER
+   ====================================================================== */
+async function loadMedicines() {
+  const { data, error } = await supabaseClient
+    .from("medicines")
+    .select("medicine_id, medicine_code, medicine_name, generic_name, strength, dosage_form")
+    .eq("status", "Active").order("medicine_name");
+  if (error) { alert("Could not load medicines: " + error.message); return; }
+  medicines = data;
+  renderMedOptions();
+}
+
+function renderMedOptions() {
+  const q = document.getElementById("med-search").value.trim().toLowerCase();
+  const sel = document.getElementById("med-select");
+  const hint = document.getElementById("med-hint");
+  const found = medicines.filter(m =>
+    !q ||
+    (m.medicine_code || "").toLowerCase().includes(q) ||
+    (m.medicine_name || "").toLowerCase().includes(q) ||
+    (m.generic_name || "").toLowerCase().includes(q) ||
+    (m.dosage_form || "").toLowerCase().includes(q));
+
+  if (!found.length) {
+    sel.innerHTML = '<option value="">No matching medicine</option>';
+    sel.disabled = true;
+    hint.textContent = medicines.length ? "" : "There are no active medicines yet. Register some on the Inventory page first.";
+    return;
+  }
+  sel.disabled = false;
+  sel.innerHTML = found.map(m =>
+    `<option value="${m.medicine_id}">${escapeHtml(m.medicine_code + " - " + medLabel(m))}</option>`).join("");
+  hint.textContent = found.length + " medicine" + (found.length === 1 ? "" : "s") + " found";
+}
+
+/* ======================================================================
+   5) ITEMS ON THE PRESCRIPTION
+   ====================================================================== */
+function addItem() {
+  const medId = document.getElementById("med-select").value;
+  const qty = Number(document.getElementById("item-qty").value);
+  const instr = document.getElementById("item-instr").value.trim() || "Take as directed";
+
+  if (!medId) { alert("Select a medicine."); return; }
+  if (!Number.isInteger(qty) || qty <= 0) { alert("Quantity must be a whole number greater than zero."); return; }
+  if (items.some(i => String(i.medicine_id) === String(medId))) {
+    alert("That medicine is already on this prescription. Remove it first if you need to change the quantity."); return;
+  }
+  const med = medicines.find(m => String(m.medicine_id) === String(medId));
+  if (!med) { alert("That medicine is no longer active."); return; }
+
+  items.push({ medicine_id: med.medicine_id, label: med.medicine_code + " - " + medLabel(med), quantity: qty, instructions: instr });
+  document.getElementById("item-qty").value = "";
+  document.getElementById("item-instr").value = "Take as directed";
+  renderItems();
+}
+
+function removeItem(index) {
+  items.splice(index, 1);
+  renderItems();
+}
+
+function renderItems() {
+  document.getElementById("items-empty").style.display = items.length ? "none" : "block";
+  document.getElementById("items-body").innerHTML = items.map((i, idx) => `
+    <tr>
+      <td>${escapeHtml(i.label)}</td>
+      <td>${i.quantity}</td>
+      <td>${escapeHtml(i.instructions)}</td>
+      <td><button type="button" class="btn-danger btn-small" onclick="removeItem(${idx})">Remove</button></td>
+    </tr>`).join("");
+}
+
+/* ======================================================================
+   6) SAVE
+   ====================================================================== */
+async function savePrescription() {
+  const patient    = document.getElementById("patient").value.trim();
+  const contact    = document.getElementById("patient-contact").value.trim();
+  const prescriber = document.getElementById("prescriber").value.trim();
+  const license    = document.getElementById("license").value.trim();
+  const date       = document.getElementById("rx-date").value;
+
+  if (!patient)    { alert("Enter the patient's name."); return; }
+  if (!prescriber) { alert("Enter the prescriber's name."); return; }
+  if (!date)       { alert("Choose the prescription date."); return; }
+  if (date > todayStr()) { alert("The prescription date cannot be in the future."); return; }
+  if (!items.length) { alert("Add at least one medicine to the prescription."); return; }
+
+  const btn = document.getElementById("save-btn");
+  btn.disabled = true;
+  let stage = "prescription";
+  let rxId = null;
+  try {
+    // 1) Header. If two people grab the same number at once, the UNIQUE constraint
+    //    rejects the second one and we simply take the next number.
+    let rxNo = document.getElementById("rx-no").value;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { data, error } = await supabaseClient.from("prescriptions")
+        .insert({
+          prescription_no: rxNo, patient_name: patient, patient_contact: contact || null,
+          prescriber_name: prescriber, prescriber_license: license || null,
+          prescription_date: date, status: "Pending",
+        })
+        .select("prescription_id, prescription_no").single();
+      if (!error) { rxId = data.prescription_id; rxNo = data.prescription_no; break; }
+      if (error.code === "23505") { rxNo = await nextRxNo(); continue; }   // number already taken
+      throw error;
+    }
+    if (!rxId) throw new Error("Could not reserve a prescription number. Please try again.");
+
+    // 2) Lines
+    stage = "items";
+    const { error: itemErr } = await supabaseClient.from("prescription_items").insert(
+      items.map(i => ({
+        prescription_id: rxId, medicine_id: i.medicine_id,
+        quantity_prescribed: i.quantity, quantity_dispensed: 0, instructions: i.instructions,
+      })));
+    if (itemErr) throw itemErr;
+
+    alert("Prescription " + rxNo + " saved.");
+    clearForm();
+    await loadList();
+  } catch (err) {
+    // The header was saved but its medicines were not -> cancel it so it isn't left half-finished
+    if (rxId && stage === "items") {
+      await supabaseClient.from("prescriptions")
+        .update({ status: "Cancelled", notes: "Failed while saving medicines: " + err.message })
+        .eq("prescription_id", rxId);
+      loadList();
+    }
+    alert("Could not save the prescription (step: " + stage + "): " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function clearForm() {
+  ["patient", "patient-contact", "prescriber", "license", "item-qty", "med-search"]
+    .forEach(id => document.getElementById(id).value = "");
+  document.getElementById("item-instr").value = "Take as directed";
+  document.getElementById("rx-date").value = todayStr();
+  items = [];
+  renderItems();
+  renderMedOptions();
+  refreshRxNo();
+}
+
+/* ======================================================================
+   7) RECENT PRESCRIPTIONS + DETAILS
+   ====================================================================== */
+async function loadList() {
+  const { data, error } = await supabaseClient
+    .from("prescriptions")
+    .select("prescription_id, prescription_no, patient_name, prescriber_name, prescription_date, status, prescription_items(prescription_item_id)")
+    .order("prescription_id", { ascending: false }).limit(50);
+  if (error) { console.error("Error loading prescriptions:", error.message); return; }
+  prescriptions = data;
+  renderList();
+}
+
+function renderList() {
+  const q = document.getElementById("list-search").value.trim().toLowerCase();
+  const filtered = prescriptions.filter(p =>
+    (p.prescription_no || "").toLowerCase().includes(q) ||
+    (p.patient_name || "").toLowerCase().includes(q));
+
+  document.getElementById("list-empty").style.display = filtered.length ? "none" : "block";
+  document.getElementById("list-body").innerHTML = filtered.map(p => `
+    <tr>
+      <td>${escapeHtml(p.prescription_no)}</td>
+      <td>${escapeHtml(p.prescription_date)}</td>
+      <td>${escapeHtml(p.patient_name)}</td>
+      <td>${(p.prescription_items || []).length}</td>
+      <td>${statusBadge(p.status)}</td>
+      <td><button class="btn-secondary btn-small" onclick="viewPrescription(${p.prescription_id})">View</button></td>
+    </tr>`).join("");
+}
+
+async function viewPrescription(id) {
+  const box = document.getElementById("detail");
+  const { data, error } = await supabaseClient
+    .from("prescriptions")
+    .select("*, prescription_items(quantity_prescribed, quantity_dispensed, instructions, medicines(medicine_code, medicine_name, strength, dosage_form))")
+    .eq("prescription_id", id).single();
+  if (error) { alert("Could not load the prescription: " + error.message); return; }
+
+  box.style.display = "block";
+  box.innerHTML = `
+    <h2 style="margin-top:0;">${escapeHtml(data.prescription_no)} ${statusBadge(data.status)}</h2>
+    <dl>
+      <dt>Date</dt><dd>${escapeHtml(data.prescription_date)}</dd>
+      <dt>Patient</dt><dd>${escapeHtml(data.patient_name)}${data.patient_contact ? " - " + escapeHtml(data.patient_contact) : ""}</dd>
+      <dt>Prescriber</dt><dd>${escapeHtml(data.prescriber_name)}${data.prescriber_license ? " (" + escapeHtml(data.prescriber_license) + ")" : ""}</dd>
+      ${data.notes ? `<dt>Notes</dt><dd>${escapeHtml(data.notes)}</dd>` : ""}
+    </dl>
+    <table>
+      <thead><tr><th>Medicine</th><th>Prescribed</th><th>Dispensed</th><th>Instructions</th></tr></thead>
+      <tbody>${(data.prescription_items || []).map(i => `
+        <tr>
+          <td>${escapeHtml(i.medicines ? i.medicines.medicine_code + " - " + medLabel(i.medicines) : "—")}</td>
+          <td>${i.quantity_prescribed}</td>
+          <td>${i.quantity_dispensed}</td>
+          <td>${escapeHtml(i.instructions || "")}</td>
+        </tr>`).join("")}</tbody>
+    </table>
+    <div style="margin-top:1rem;"><button class="btn-secondary btn-small" onclick="document.getElementById('detail').style.display='none'">Close</button></div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+/* ======================================================================
+   8) INIT
+   ====================================================================== */
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) { window.location.href = "login-page.html"; return; }
+  const me = await getProfile();
+  isManager = me && me.role === "Manager";
+
+  if (!isManager) {
+    document.getElementById("rx-date").value = todayStr();
+    document.getElementById("rx-date").max = todayStr();
+    renderItems();
+    loadMedicines();
+    refreshRxNo();
+  }
+  loadList();
+})();
+</script>
+
+</body>
+</html>
