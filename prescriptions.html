@@ -293,13 +293,14 @@ async function savePrescription() {
   try {
     // 1) Header. If two people grab the same number at once, the UNIQUE constraint
     //    rejects the second one and we simply take the next number.
+    const me = await getProfile();
     let rxNo = document.getElementById("rx-no").value;
     for (let attempt = 0; attempt < 5; attempt++) {
       const { data, error } = await supabaseClient.from("prescriptions")
         .insert({
           prescription_no: rxNo, patient_name: patient, patient_contact: contact || null,
-          prescriber_name: prescriber, prescriber_license: license || null,
-          prescription_date: date, status: "Pending",
+          doctor_name: prescriber, prescriber_license: license || null,
+          prescription_date: date, status: "Pending", user_id: me.id,
         })
         .select("prescription_id, prescription_no").single();
       if (!error) { rxId = data.prescription_id; rxNo = data.prescription_no; break; }
@@ -313,7 +314,7 @@ async function savePrescription() {
     const { error: itemErr } = await supabaseClient.from("prescription_items").insert(
       items.map(i => ({
         prescription_id: rxId, medicine_id: i.medicine_id,
-        quantity_prescribed: i.quantity, quantity_dispensed: 0, instructions: i.instructions,
+        quantity: i.quantity, quantity_dispensed: 0, dosage_instructions: i.instructions,
       })));
     if (itemErr) throw itemErr;
 
@@ -351,7 +352,7 @@ function clearForm() {
 async function loadList() {
   const { data, error } = await supabaseClient
     .from("prescriptions")
-    .select("prescription_id, prescription_no, patient_name, prescriber_name, prescription_date, status, prescription_items(prescription_item_id)")
+    .select("prescription_id, prescription_no, patient_name, doctor_name, prescription_date, status, prescription_items(prescription_item_id)")
     .order("prescription_id", { ascending: false }).limit(50);
   if (error) { console.error("Error loading prescriptions:", error.message); return; }
   prescriptions = data;
@@ -380,7 +381,7 @@ async function viewPrescription(id) {
   const box = document.getElementById("detail");
   const { data, error } = await supabaseClient
     .from("prescriptions")
-    .select("*, prescription_items(quantity_prescribed, quantity_dispensed, instructions, medicines(medicine_code, medicine_name, strength, dosage_form))")
+    .select("*, prescription_items(quantity, quantity_dispensed, dosage_instructions, medicines(medicine_code, medicine_name, strength, dosage_form))")
     .eq("prescription_id", id).single();
   if (error) { alert("Could not load the prescription: " + error.message); return; }
 
@@ -390,7 +391,7 @@ async function viewPrescription(id) {
     <dl>
       <dt>Date</dt><dd>${escapeHtml(data.prescription_date)}</dd>
       <dt>Patient</dt><dd>${escapeHtml(data.patient_name)}${data.patient_contact ? " - " + escapeHtml(data.patient_contact) : ""}</dd>
-      <dt>Prescriber</dt><dd>${escapeHtml(data.prescriber_name)}${data.prescriber_license ? " (" + escapeHtml(data.prescriber_license) + ")" : ""}</dd>
+      <dt>Prescriber</dt><dd>${escapeHtml(data.doctor_name)}${data.prescriber_license ? " (" + escapeHtml(data.prescriber_license) + ")" : ""}</dd>
       ${data.notes ? `<dt>Notes</dt><dd>${escapeHtml(data.notes)}</dd>` : ""}
     </dl>
     <table>
@@ -398,9 +399,9 @@ async function viewPrescription(id) {
       <tbody>${(data.prescription_items || []).map(i => `
         <tr>
           <td>${escapeHtml(i.medicines ? i.medicines.medicine_code + " - " + medLabel(i.medicines) : "—")}</td>
-          <td>${i.quantity_prescribed}</td>
+          <td>${i.quantity}</td>
           <td>${i.quantity_dispensed}</td>
-          <td>${escapeHtml(i.instructions || "")}</td>
+          <td>${escapeHtml(i.dosage_instructions || "")}</td>
         </tr>`).join("")}</tbody>
     </table>
     <div style="margin-top:1rem;"><button class="btn-secondary btn-small" onclick="document.getElementById('detail').style.display='none'">Close</button></div>`;
