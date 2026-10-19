@@ -104,6 +104,7 @@
           <input type="search" id="med-search" placeholder="Search medicine by code, name, generic name, category or dosage form..." oninput="renderResults()">
         </div>
         <div id="med-hint" style="font-size:0.82rem; color:var(--color-text-soft); margin-bottom:0.5rem;"></div>
+        <div id="blocked-box" style="display:none; background:#FBEDEA; color:var(--color-danger); border-radius:var(--radius-sm); padding:0.7rem 1rem; margin-bottom:0.75rem; font-size:0.9rem;"></div>
 
         <div style="border:1px solid var(--color-border); border-radius:var(--radius-sm); overflow:auto; margin-bottom:1.5rem;">
           <table>
@@ -287,6 +288,8 @@ function renderStats() {
    LAB 15: SALES CART  (nothing is saved yet - checkout comes in Labs 17-18)
    ====================================================================== */
 let catalog = [];   // active medicines with stock + the price of their earliest-expiring batch
+let blockedMeds = []; // medicines whose ONLY stock is expired (Lab 21)
+let expiredBy = {};   // medicine_id -> expired stock info, used by the prescription check
 let batchesBy = {};  // medicine_id -> [{ qty, price }] in the order checkout will use them (earliest expiry first)
 let cartRx = null;  // prescription attached to the cart: { prescription_id, prescription_no, patient, remaining: {medicine_id: qty} }
 let cart = [];      // { medicine_id, code, label, price, max, qty, rx }
@@ -298,7 +301,7 @@ async function loadCatalog() {
   const d = new Date();
   const today = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 
-  const [meds, batches] = await Promise.all([
+  const [meds, batches, expired] = await Promise.all([
     supabaseClient.from("v_medicine_stock")
       .select("medicine_id, medicine_code, medicine_name, generic_name, strength, dosage_form, category_name, requires_prescription, quantity_on_hand")
       .eq("status", "Active").order("medicine_name"),
@@ -306,6 +309,9 @@ async function loadCatalog() {
       .select("medicine_id, quantity, selling_price, expiration_date, inventory_id")
       .gt("quantity", 0).gte("expiration_date", today)
       .order("expiration_date").order("inventory_id"),
+    supabaseClient.from("v_inventory_batches")
+      .select("medicine_id, medicine_code, medicine_name, generic_name, strength, dosage_form, category_name, batch_number, quantity, expiration_date")
+      .eq("expiry_status", "Expired").gt("quantity", 0).order("expiration_date"),
   ]);
   if (meds.error || batches.error) {
     console.error("Could not load medicines:", (meds.error || batches.error).message);
@@ -317,6 +323,15 @@ async function loadCatalog() {
   batches.data.forEach(b => (batchesBy[b.medicine_id] = batchesBy[b.medicine_id] || []).push({ qty: b.quantity, price: Number(b.selling_price) }));
   const price = {};                       // first batch per medicine = the listed price
   Object.keys(batchesBy).forEach(id => { price[id] = batchesBy[id][0].price; });
+
+  // Lab 21: group expired stock per medicine; the ones with no valid stock left are BLOCKED from sale
+  expiredBy = {};
+  (expired.data || []).forEach(b => {
+    const e = expiredBy[b.medicine_id] = expiredBy[b.medicine_id] || { ...b, quantity: 0, batches: [] };
+    e.quantity += b.quantity;
+    e.batches.push(b.batch_number + " (expired " + b.expiration_date + ")");
+  });
+  blockedMeds = Object.values(expiredBy).filter(e => !(e.medicine_id in price));
 
   catalog = meds.data
     .filter(m => m.quantity_on_hand > 0 && m.medicine_id in price)   // expired / empty stock cannot be sold
@@ -333,6 +348,14 @@ function renderResults() {
   document.getElementById("med-hint").textContent = !catalog.length
     ? "No medicines are available for sale (no active medicine with unexpired stock)."
     : found.length + " available medicine" + (found.length === 1 ? "" : "s") + (found.length > 8 ? " (showing first 8 - refine your search)" : "");
+
+  // Lab 21: a medicine that exists but is only available as expired stock cannot be sold
+  const blocked = q ? searchMedicines(blockedMeds, q) : [];
+  const box = document.getElementById("blocked-box");
+  box.style.display = blocked.length ? "block" : "none";
+  box.innerHTML = blocked.map(b =>
+    `<div><strong>SALE BLOCKED</strong> - ${escapeHtml(medLabel(b))} has expired and cannot be sold.` +
+    `<div style="font-size:0.8rem;">Batch ${escapeHtml(b.batches.join(", "))} - ${b.quantity} unit(s). Remove it from stock with a Stock Adjustment (Expired).</div></div>`).join("");
 
   document.getElementById("results-body").innerHTML = shown.map(m => `
     <tr>
@@ -485,7 +508,8 @@ function rxLineState(it) {
   const stock = m ? m.quantity_on_hand : 0;
   if (remaining <= 0)            return { remaining, stock, qty: 0, label: "Fully dispensed",  cls: "badge-success" };
   if (med.status !== "Active")   return { remaining, stock, qty: 0, label: "Medicine inactive", cls: "badge-danger" };
-  if (!m)                        return { remaining, stock, qty: 0, label: "No valid stock (out of stock or expired)", cls: "badge-danger" };
+  if (!m && expiredBy[it.medicine_id]) return { remaining, stock, qty: 0, label: "SALE BLOCKED - medicine has expired", cls: "badge-danger" };
+  if (!m)                        return { remaining, stock, qty: 0, label: "No stock available", cls: "badge-danger" };
   if (stock < remaining)         return { remaining, stock, qty: stock, label: "Insufficient stock - only " + stock + " available", cls: "badge-warning" };
   return { remaining, stock, qty: remaining, label: "Ready", cls: "badge-success" };
 }
