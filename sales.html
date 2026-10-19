@@ -32,9 +32,53 @@
     </header>
 
     <main>
+      <!-- LAB 16: PRESCRIPTION-BASED DISPENSING (pharmacists / admins only: cashiers cannot read prescriptions) -->
+      <div class="table-wrap" style="padding:1.5rem; margin-bottom:1.5rem;" data-hide="cashier manager">
+        <h2 style="margin-top:0;">Prescription Dispensing</h2>
+        <div class="toolbar">
+          <input type="search" id="rx-search" placeholder="Search prescription by Rx no. or patient name..." oninput="renderRxResults()">
+        </div>
+        <div id="rx-hint" style="font-size:0.82rem; color:var(--color-text-soft); margin-bottom:0.5rem;"></div>
+
+        <div style="border:1px solid var(--color-border); border-radius:var(--radius-sm); overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>Rx no.</th><th>Patient</th><th>Prescriber</th><th>Date</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody id="rx-results-body"></tbody>
+          </table>
+        </div>
+
+        <div id="rx-detail" style="display:none; margin-top:1.5rem;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.75rem; margin-bottom:0.75rem;">
+            <div>
+              <h3 style="margin:0;" id="rx-title"></h3>
+              <div style="font-size:0.85rem; color:var(--color-text-soft);" id="rx-meta"></div>
+            </div>
+            <div style="display:flex; gap:0.5rem;">
+              <button class="btn-primary btn-small" onclick="addAllRxLines()">Add all available to cart</button>
+              <button class="btn-secondary btn-small" onclick="closeRx()">Close</button>
+            </div>
+          </div>
+          <div style="border:1px solid var(--color-border); border-radius:var(--radius-sm); overflow:auto;">
+            <table>
+              <thead>
+                <tr><th>Medicine</th><th>Prescribed</th><th>Dispensed</th><th>Remaining</th><th>In stock</th><th>Check</th><th></th></tr>
+              </thead>
+              <tbody id="rx-items-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- LAB 15: PHARMACY SALES CART -->
       <div class="table-wrap" style="padding:1.5rem; margin-bottom:1.5rem;" data-hide="manager">
         <h2 style="margin-top:0;">Pharmacy Sales Cart</h2>
+
+        <div id="rx-banner" style="display:none; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem; background:#E2F4EC; color:var(--color-success); border-radius:var(--radius-sm); padding:0.6rem 0.9rem; margin-bottom:1rem; font-size:0.9rem;">
+          <span id="rx-banner-text"></span>
+          <button class="btn-secondary btn-small" onclick="detachRx()">Detach prescription</button>
+        </div>
 
         <div class="field" style="max-width:360px;">
           <label for="customer">Customer</label>
@@ -77,7 +121,7 @@
           </div>
         </div>
         <div style="font-size:0.78rem; color:var(--color-text-soft); margin-top:0.5rem;">
-          Checkout, payment and inventory deduction are added in Labs 17-18. Prices shown are those of the batch that expires first.
+          Checkout, payment, inventory deduction and the prescription update are added in Labs 17-18. Prices shown are those of the batch that expires first.
         </div>
       </div>
 
@@ -184,6 +228,7 @@ function renderStats() {
    LAB 15: SALES CART  (nothing is saved yet - checkout comes in Labs 17-18)
    ====================================================================== */
 let catalog = [];   // active medicines with stock + the price of their earliest-expiring batch
+let cartRx = null;  // prescription attached to the cart: { prescription_id, prescription_no, patient, remaining: {medicine_id: qty} }
 let cart = [];      // { medicine_id, code, label, price, max, qty, rx }
 
 const peso = (n) => "\u20B1" + Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -215,6 +260,7 @@ async function loadCatalog() {
     .filter(m => m.quantity_on_hand > 0 && m.medicine_id in price)   // expired / empty stock cannot be sold
     .map(m => ({ ...m, price: price[m.medicine_id] }));
   renderResults();
+  renderRxDetail();
 }
 
 function renderResults() {
@@ -240,13 +286,22 @@ function renderResults() {
 function addToCart(medicineId) {
   const m = catalog.find(x => x.medicine_id === medicineId);
   if (!m) return;
+  let max = m.quantity_on_hand;
+  if (cartRx) {                                   // a prescription is attached: only its medicines, only what is left on it
+    const left = cartRx.remaining[medicineId] || 0;
+    if (left <= 0) {
+      alert(medLabel(m) + " is not on prescription " + cartRx.prescription_no + " (or is already fully dispensed). Detach the prescription to sell it as a regular sale.");
+      return;
+    }
+    max = Math.min(max, left);
+  }
   const line = cart.find(c => c.medicine_id === medicineId);
   if (line) {
-    if (line.qty >= line.max) { alert("Only " + line.max + " unit(s) of " + line.label + " are in stock."); return; }
+    if (line.qty >= line.max) { alert("Only " + line.max + " unit(s) of " + line.label + " can be added."); return; }
     line.qty++;
   } else {
     cart.push({ medicine_id: m.medicine_id, code: m.medicine_code, label: medLabel(m),
-                price: m.price, max: m.quantity_on_hand, qty: 1, rx: m.requires_prescription });
+                price: m.price, max: max, qty: 1, rx: m.requires_prescription });
   }
   renderCart();
 }
@@ -255,7 +310,7 @@ function changeQty(index, value) {
   const line = cart[index];
   const qty = Number(value);
   if (!Number.isInteger(qty) || qty <= 0) { alert("Quantity must be a whole number greater than zero."); }
-  else if (qty > line.max) { alert("Only " + line.max + " unit(s) of " + line.label + " are in stock."); line.qty = line.max; }
+  else if (qty > line.max) { alert("Only " + line.max + " unit(s) of " + line.label + " can be added (stock" + (cartRx ? " / prescription limit" : "") + ")."); line.qty = line.max; }
   else { line.qty = qty; }
   renderCart();
 }
@@ -266,16 +321,20 @@ function removeFromCart(index) {
 }
 
 function clearCart() {
-  if (cart.length && !confirm("Remove every medicine from the cart?")) return;
+  if ((cart.length || cartRx) && !confirm("Remove every medicine from the cart?")) return;
   cart = [];
+  if (cartRx) { cartRx = null; document.getElementById("customer").value = "Walk-in Customer"; }
   renderCart();
 }
 
 function renderCart() {
+  const banner = document.getElementById("rx-banner");
+  banner.style.display = cartRx ? "flex" : "none";
+  if (cartRx) document.getElementById("rx-banner-text").textContent = "Dispensing for prescription " + cartRx.prescription_no + " - " + cartRx.patient;
   document.getElementById("cart-empty").style.display = cart.length ? "none" : "block";
   document.getElementById("cart-body").innerHTML = cart.map((c, i) => `
     <tr>
-      <td>${escapeHtml(c.label)}${c.rx ? ' <span class="badge badge-warning">Rx</span>' : ""}</td>
+      <td>${escapeHtml(c.label)}${c.rx ? (cartRx ? ' <span class="badge badge-warning">Rx</span>' : ' <span class="badge badge-danger">Needs prescription</span>') : ""}</td>
       <td><input type="number" min="1" max="${c.max}" step="1" value="${c.qty}" style="width:5rem; padding:0.35rem 0.5rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);" onchange="changeQty(${i}, this.value)"></td>
       <td>${peso(c.price)}</td>
       <td>${peso(c.price * c.qty)}</td>
@@ -284,6 +343,155 @@ function renderCart() {
 
   document.getElementById("cart-count").textContent = cart.reduce((n, c) => n + c.qty, 0);
   document.getElementById("cart-total").textContent = peso(cart.reduce((sum, c) => sum + c.price * c.qty, 0));
+  renderRxDetail();
+}
+
+/* ======================================================================
+   LAB 16: PRESCRIPTION-BASED DISPENSING
+   Search prescription -> display -> verify medicine -> check inventory -> add to cart.
+   (The sale itself is saved at checkout, Labs 17-18.)
+   ====================================================================== */
+let rxList = [];      // prescriptions that still have something to dispense
+let rxActive = null;  // the prescription being displayed
+
+async function loadPrescriptions() {
+  const { data, error } = await supabaseClient
+    .from("prescriptions")
+    .select("prescription_id, prescription_no, patient_name, doctor_name, prescription_date, status, prescription_items(prescription_item_id, medicine_id, quantity, quantity_dispensed, dosage_instructions, medicines(medicine_code, medicine_name, strength, dosage_form, status))")
+    .in("status", ["Pending", "Partially Dispensed"])
+    .order("prescription_id", { ascending: false });
+  if (error) {
+    console.error("Could not load prescriptions:", error.message);
+    document.getElementById("rx-hint").textContent = "Could not load prescriptions.";
+    return;
+  }
+  rxList = data;
+  renderRxResults();
+}
+
+function renderRxResults() {
+  const q = document.getElementById("rx-search").value.trim().toLowerCase();
+  const found = rxList.filter(r =>
+    !q || r.prescription_no.toLowerCase().includes(q) || r.patient_name.toLowerCase().includes(q));
+  const shown = found.slice(0, 5);
+
+  document.getElementById("rx-hint").textContent = !rxList.length
+    ? "There are no pending or partially dispensed prescriptions."
+    : found.length + " prescription" + (found.length === 1 ? "" : "s") + " found" + (found.length > 5 ? " (showing first 5 - refine your search)" : "");
+
+  document.getElementById("rx-results-body").innerHTML = shown.map(r => `
+    <tr>
+      <td>${escapeHtml(r.prescription_no)}</td>
+      <td>${escapeHtml(r.patient_name)}</td>
+      <td>${escapeHtml(r.doctor_name)}</td>
+      <td>${escapeHtml(r.prescription_date)}</td>
+      <td><span class="badge ${r.status === "Pending" ? "badge-warning" : "badge-success"}">${escapeHtml(r.status)}</span></td>
+      <td><button class="btn-primary btn-small" onclick="selectRx(${r.prescription_id})">Select</button></td>
+    </tr>`).join("");
+}
+
+function selectRx(id) {
+  rxActive = rxList.find(r => r.prescription_id === id) || null;
+  renderRxDetail();
+}
+
+function closeRx() {
+  rxActive = null;
+  renderRxDetail();
+}
+
+// Verify the medicine and check inventory for one prescription line
+function rxLineState(it) {
+  const remaining = it.quantity - it.quantity_dispensed;
+  const med = it.medicines || {};
+  const m = catalog.find(x => x.medicine_id === it.medicine_id);
+  const stock = m ? m.quantity_on_hand : 0;
+  if (remaining <= 0)            return { remaining, stock, qty: 0, label: "Fully dispensed",  cls: "badge-success" };
+  if (med.status !== "Active")   return { remaining, stock, qty: 0, label: "Medicine inactive", cls: "badge-danger" };
+  if (!m)                        return { remaining, stock, qty: 0, label: "No valid stock (out of stock or expired)", cls: "badge-danger" };
+  if (stock < remaining)         return { remaining, stock, qty: stock, label: "Insufficient stock - only " + stock + " available", cls: "badge-warning" };
+  return { remaining, stock, qty: remaining, label: "Ready", cls: "badge-success" };
+}
+
+function renderRxDetail() {
+  const box = document.getElementById("rx-detail");
+  if (!rxActive) { box.style.display = "none"; return; }
+  box.style.display = "block";
+
+  document.getElementById("rx-title").textContent = rxActive.prescription_no + " - " + rxActive.patient_name;
+  document.getElementById("rx-meta").textContent = "Prescriber: " + rxActive.doctor_name + "  |  Date: " + rxActive.prescription_date + "  |  Status: " + rxActive.status;
+
+  const linked = cartRx && cartRx.prescription_id === rxActive.prescription_id;
+  document.getElementById("rx-items-body").innerHTML = rxActive.prescription_items.map(it => {
+    const st = rxLineState(it);
+    const med = it.medicines || {};
+    const inCart = linked && cart.some(c => c.medicine_id === it.medicine_id);
+    const action = st.qty > 0
+      ? `<button class="${inCart ? "btn-secondary" : "btn-primary"} btn-small" onclick="addRxLine(${it.medicine_id})">${inCart ? "Update cart (" + st.qty + ")" : "Add " + st.qty + " to cart"}</button>`
+      : "";
+    return `
+      <tr>
+        <td>${escapeHtml(med.medicine_code + " - " + [med.medicine_name, med.strength].filter(Boolean).join(" "))}${it.dosage_instructions ? '<div style="font-size:0.78rem; color:var(--color-text-soft);">' + escapeHtml(it.dosage_instructions) + "</div>" : ""}</td>
+        <td>${it.quantity}</td>
+        <td>${it.quantity_dispensed}</td>
+        <td>${st.remaining}</td>
+        <td>${st.stock}</td>
+        <td><span class="badge ${st.cls}">${escapeHtml(st.label)}</span></td>
+        <td>${action}</td>
+      </tr>`;
+  }).join("");
+}
+
+// Attach the displayed prescription to the cart (clears an unrelated cart after confirmation)
+function ensureRxLink() {
+  if (cartRx && cartRx.prescription_id === rxActive.prescription_id) return true;
+  if (cart.length && !confirm("Dispensing " + rxActive.prescription_no + " will clear the items currently in the cart. Continue?")) return false;
+  const remaining = {};
+  rxActive.prescription_items.forEach(i => { remaining[i.medicine_id] = i.quantity - i.quantity_dispensed; });
+  cart = [];
+  cartRx = { prescription_id: rxActive.prescription_id, prescription_no: rxActive.prescription_no,
+             patient: rxActive.patient_name, remaining };
+  document.getElementById("customer").value = rxActive.patient_name;
+  return true;
+}
+
+// Put one prescription line in the cart (quantity = what is left, limited by stock)
+function putRxLine(it) {
+  const st = rxLineState(it);
+  if (st.qty <= 0) return false;
+  const m = catalog.find(x => x.medicine_id === it.medicine_id);
+  const line = cart.find(c => c.medicine_id === it.medicine_id);
+  if (line) { line.qty = st.qty; line.max = st.qty; }
+  else cart.push({ medicine_id: m.medicine_id, code: m.medicine_code, label: medLabel(m),
+                   price: m.price, max: st.qty, qty: st.qty, rx: m.requires_prescription });
+  return true;
+}
+
+function addRxLine(medicineId) {
+  const it = rxActive && rxActive.prescription_items.find(i => i.medicine_id === medicineId);
+  if (!it) return;
+  if (rxLineState(it).qty <= 0) { alert("This medicine cannot be dispensed: " + rxLineState(it).label + "."); return; }
+  if (!ensureRxLink()) return;
+  putRxLine(it);
+  renderCart();
+}
+
+function addAllRxLines() {
+  if (!rxActive) return;
+  if (!rxActive.prescription_items.some(i => rxLineState(i).qty > 0)) {
+    alert("Nothing on this prescription can be dispensed right now."); return;
+  }
+  if (!ensureRxLink()) return;
+  rxActive.prescription_items.forEach(putRxLine);
+  renderCart();
+}
+
+function detachRx() {
+  if (cart.length && !confirm("Detaching the prescription will clear the cart. Continue?")) return;
+  cart = [];
+  cartRx = null;
+  document.getElementById("customer").value = "Walk-in Customer";
+  renderCart();
 }
 
 function escapeHtml(str) {
@@ -298,6 +506,8 @@ function escapeHtml(str) {
   loadSales();
   loadCatalog();
   renderCart();
+  const me = await getProfile();
+  if (me && ["Admin", "Pharmacist"].includes(me.role)) loadPrescriptions();   // cashiers cannot read prescriptions
 })();
 </script>
 
