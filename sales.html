@@ -11,6 +11,21 @@
 <script src="./js/auth.js"></script>
 <script src="./js/medicine-search.js"></script>
 <link rel="stylesheet" href="css/styles.css">
+<style>
+  /* Lab 19: only the receipt is printed */
+  @media print {
+    body * { visibility: hidden !important; }
+    #receipt-print, #receipt-print * { visibility: visible !important; }
+    #receipt-print { position: absolute; left: 0; top: 0; width: 80mm; padding: 0; }
+    .modal-backdrop { background: none !important; }
+  }
+  #receipt-print { font-family: "Courier New", monospace; font-size: 0.85rem; color: #000; background: #fff;
+                   border: 1px dashed var(--color-border); padding: 1rem; }
+  #receipt-print .rc-center { text-align: center; }
+  #receipt-print .rc-row { display: flex; justify-content: space-between; gap: 0.5rem; }
+  #receipt-print .rc-line { border-top: 1px dashed #000; margin: 0.5rem 0; }
+  #receipt-print .rc-bold { font-weight: 700; }
+</style>
 
 </head>
 <body>
@@ -117,11 +132,11 @@
           </div>
           <div style="display:flex; gap:0.5rem;">
             <button class="btn-secondary" onclick="clearCart()">Clear cart</button>
-            <button class="btn-primary" id="checkout-btn" disabled title="Payment and checkout are built in Labs 17-18">Checkout</button>
+            <button class="btn-primary" id="checkout-btn" onclick="openPayment()" disabled>Checkout</button>
           </div>
         </div>
         <div style="font-size:0.78rem; color:var(--color-text-soft); margin-top:0.5rem;">
-          Checkout, payment, inventory deduction and the prescription update are added in Labs 17-18. Prices shown are those of the batch that expires first.
+          Stock is taken from the batches that expire first, and those batches' prices are used.
         </div>
       </div>
 
@@ -155,6 +170,7 @@
               <th>Total</th>
               <th>Payment</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="table-body">
@@ -168,6 +184,48 @@
     </main>
   </div>
 
+</div>
+
+<!-- LAB 18: payment modal -->
+<div class="modal-backdrop" id="pay-backdrop">
+  <div class="modal">
+    <h2>Payment</h2>
+    <div style="font-size:0.85rem; color:var(--color-text-soft);" id="pay-summary"></div>
+    <div style="font-size:1.6rem; font-weight:700; margin:0.5rem 0 1rem;">Total <span id="pay-total"></span></div>
+
+    <div class="field">
+      <label for="pay-method">Payment method</label>
+      <select id="pay-method" onchange="payMethodChanged()" style="width:100%; padding:0.55rem 0.75rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface); font-size:0.95rem;">
+        <option>Cash</option><option>Card</option><option>E-Wallet</option><option>GCash</option>
+        <option>Maya</option><option>Bank Transfer</option><option>Other</option>
+      </select>
+    </div>
+    <div class="field" id="pay-cash-box">
+      <label for="pay-tendered">Cash received</label>
+      <input type="number" id="pay-tendered" min="0" step="0.01" oninput="updateChange()">
+      <div style="margin-top:0.5rem; font-weight:600;">Change: <span id="pay-change">&#8369;0.00</span></div>
+    </div>
+    <div class="field" id="pay-ref-box" style="display:none;">
+      <label for="pay-ref">Reference no. (optional)</label>
+      <input type="text" id="pay-ref" maxlength="60">
+    </div>
+    <div id="pay-error" style="color:var(--color-danger); font-size:0.85rem; min-height:1.2em;"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" onclick="closePayment()">Cancel</button>
+      <button type="button" class="btn-primary" id="pay-confirm" onclick="confirmPayment()">Confirm payment</button>
+    </div>
+  </div>
+</div>
+
+<!-- LAB 19: receipt modal -->
+<div class="modal-backdrop" id="receipt-backdrop">
+  <div class="modal" style="max-width:380px;">
+    <div id="receipt-print"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" onclick="closeReceipt()">Close</button>
+      <button type="button" class="btn-primary" onclick="window.print()">Print receipt</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -210,6 +268,7 @@ function renderTable() {
       <td>${Number(s.total_amount).toFixed(2)}</td>
       <td>${escapeHtml([...new Set((s.payments || []).map(p => p.payment_method))].join(", ") || "—")}</td>
       <td>${statusBadge(s)}</td>
+      <td><button class="btn-secondary btn-small" onclick="showReceipt(${s.sale_id}, true)">Receipt</button></td>
     </tr>
   `).join("");
 }
@@ -228,6 +287,7 @@ function renderStats() {
    LAB 15: SALES CART  (nothing is saved yet - checkout comes in Labs 17-18)
    ====================================================================== */
 let catalog = [];   // active medicines with stock + the price of their earliest-expiring batch
+let batchesBy = {};  // medicine_id -> [{ qty, price }] in the order checkout will use them (earliest expiry first)
 let cartRx = null;  // prescription attached to the cart: { prescription_id, prescription_no, patient, remaining: {medicine_id: qty} }
 let cart = [];      // { medicine_id, code, label, price, max, qty, rx }
 
@@ -243,7 +303,7 @@ async function loadCatalog() {
       .select("medicine_id, medicine_code, medicine_name, generic_name, strength, dosage_form, category_name, requires_prescription, quantity_on_hand")
       .eq("status", "Active").order("medicine_name"),
     supabaseClient.from("inventory")
-      .select("medicine_id, selling_price, expiration_date, inventory_id")
+      .select("medicine_id, quantity, selling_price, expiration_date, inventory_id")
       .gt("quantity", 0).gte("expiration_date", today)
       .order("expiration_date").order("inventory_id"),
   ]);
@@ -253,8 +313,10 @@ async function loadCatalog() {
     return;
   }
 
-  const price = {};                       // first batch per medicine = earliest expiry
-  batches.data.forEach(b => { if (!(b.medicine_id in price)) price[b.medicine_id] = Number(b.selling_price); });
+  batchesBy = {};                         // unexpired batches per medicine, earliest expiry first
+  batches.data.forEach(b => (batchesBy[b.medicine_id] = batchesBy[b.medicine_id] || []).push({ qty: b.quantity, price: Number(b.selling_price) }));
+  const price = {};                       // first batch per medicine = the listed price
+  Object.keys(batchesBy).forEach(id => { price[id] = batchesBy[id][0].price; });
 
   catalog = meds.data
     .filter(m => m.quantity_on_hand > 0 && m.medicine_id in price)   // expired / empty stock cannot be sold
@@ -327,6 +389,20 @@ function clearCart() {
   renderCart();
 }
 
+// What checkout will charge for qty units of a medicine (stock is taken from the earliest-expiring batches first)
+function fefoTotal(medicineId, qty) {
+  let left = qty, sum = 0;
+  for (const b of (batchesBy[medicineId] || [])) {
+    if (left <= 0) break;
+    const take = Math.min(left, b.qty);
+    sum += take * b.price;
+    left -= take;
+  }
+  return Math.round(sum * 100) / 100;
+}
+const lineTotal = (c) => fefoTotal(c.medicine_id, c.qty);
+const cartTotal = () => Math.round(cart.reduce((sum, c) => sum + lineTotal(c), 0) * 100) / 100;
+
 function renderCart() {
   const banner = document.getElementById("rx-banner");
   banner.style.display = cartRx ? "flex" : "none";
@@ -336,13 +412,14 @@ function renderCart() {
     <tr>
       <td>${escapeHtml(c.label)}${c.rx ? (cartRx ? ' <span class="badge badge-warning">Rx</span>' : ' <span class="badge badge-danger">Needs prescription</span>') : ""}</td>
       <td><input type="number" min="1" max="${c.max}" step="1" value="${c.qty}" style="width:5rem; padding:0.35rem 0.5rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);" onchange="changeQty(${i}, this.value)"></td>
-      <td>${peso(c.price)}</td>
-      <td>${peso(c.price * c.qty)}</td>
+      <td>${peso(lineTotal(c) / c.qty)}</td>
+      <td>${peso(lineTotal(c))}</td>
       <td><button class="btn-danger btn-small" onclick="removeFromCart(${i})">Remove</button></td>
     </tr>`).join("");
 
   document.getElementById("cart-count").textContent = cart.reduce((n, c) => n + c.qty, 0);
-  document.getElementById("cart-total").textContent = peso(cart.reduce((sum, c) => sum + c.price * c.qty, 0));
+  document.getElementById("cart-total").textContent = peso(cartTotal());
+  document.getElementById("checkout-btn").disabled = !cart.length;
   renderRxDetail();
 }
 
@@ -492,6 +569,171 @@ function detachRx() {
   cartRx = null;
   document.getElementById("customer").value = "Walk-in Customer";
   renderCart();
+}
+
+/* ======================================================================
+   LAB 18: PAYMENT PROCESSING
+   checkout_sale() (database) validates stock and expiry, saves the sale and its items,
+   deducts inventory, updates the prescription, then records the payment - all in one
+   transaction, so a failed payment never leaves a half-finished sale.
+   ====================================================================== */
+let paying = false;   // blocks double-clicks (duplicate sales)
+
+function openPayment() {
+  if (!cart.length) return;
+  const total = cartTotal();
+  document.getElementById("pay-summary").textContent =
+    (document.getElementById("customer").value.trim() || "Walk-in Customer") + "  |  " +
+    cart.reduce((n, c) => n + c.qty, 0) + " item(s)" + (cartRx ? "  |  " + cartRx.prescription_no : "");
+  document.getElementById("pay-total").textContent = peso(total);
+  document.getElementById("pay-method").value = "Cash";
+  document.getElementById("pay-tendered").value = "";
+  document.getElementById("pay-ref").value = "";
+  document.getElementById("pay-error").textContent = "";
+  payMethodChanged();
+  document.getElementById("pay-backdrop").classList.add("open");
+  document.getElementById("pay-tendered").focus();
+}
+
+function closePayment() {
+  if (paying) return;
+  document.getElementById("pay-backdrop").classList.remove("open");
+}
+
+function payMethodChanged() {
+  const cash = document.getElementById("pay-method").value === "Cash";
+  document.getElementById("pay-cash-box").style.display = cash ? "block" : "none";
+  document.getElementById("pay-ref-box").style.display = cash ? "none" : "block";
+  document.getElementById("pay-error").textContent = "";
+  updateChange();
+}
+
+function updateChange() {
+  const cents = (n) => Math.round(Number(n) * 100);
+  const tendered = document.getElementById("pay-tendered").value;
+  const diff = tendered === "" ? 0 : cents(tendered) - cents(cartTotal());
+  document.getElementById("pay-change").textContent = peso(diff > 0 ? diff / 100 : 0);
+}
+
+async function confirmPayment() {
+  if (paying) return;
+  const err = document.getElementById("pay-error");
+  err.textContent = "";
+
+  const method = document.getElementById("pay-method").value;
+  const total = cartTotal();
+  let tendered = null;
+
+  if (!cart.length || total <= 0) { err.textContent = "The cart is empty."; return; }
+  if (method === "Cash") {
+    const raw = document.getElementById("pay-tendered").value;
+    tendered = Number(raw);
+    if (raw === "" || !isFinite(tendered) || tendered <= 0) { err.textContent = "Enter the cash received."; return; }
+    if (Math.round(tendered * 100) < Math.round(total * 100)) {
+      err.textContent = "Insufficient payment: " + peso(total - tendered) + " short.";
+      return;
+    }
+  }
+
+  paying = true;
+  const btn = document.getElementById("pay-confirm");
+  btn.disabled = true; btn.textContent = "Processing...";
+
+  const { data: saleId, error } = await supabaseClient.rpc("checkout_sale", {
+    p_items: cart.map(c => ({ medicine_id: c.medicine_id, quantity: c.qty })),
+    p_customer_name: document.getElementById("customer").value.trim() || null,
+    p_prescription_id: cartRx ? cartRx.prescription_id : null,
+    p_discount: 0,
+    p_payment_method: method,
+    p_amount_tendered: tendered,
+    p_reference_no: method === "Cash" ? null : (document.getElementById("pay-ref").value.trim() || null),
+  });
+
+  paying = false;
+  btn.disabled = false; btn.textContent = "Confirm payment";
+
+  if (error) {                        // nothing was saved; the cart is kept
+    err.textContent = error.message;
+    loadCatalog();                    // stock may have changed
+    return;
+  }
+
+  // Success: close payment, reset the cart, refresh stock / history / prescriptions, show the receipt
+  document.getElementById("pay-backdrop").classList.remove("open");
+  cart = [];
+  cartRx = null;
+  rxActive = null;
+  document.getElementById("customer").value = "Walk-in Customer";
+  renderCart();
+  loadSales();
+  loadCatalog();
+  const me = await getProfile();
+  if (me && ["Admin", "Pharmacist"].includes(me.role)) loadPrescriptions();
+  showReceipt(saleId, false);
+}
+
+/* ======================================================================
+   LAB 19: RECEIPT  (preview, print, reprint)
+   ====================================================================== */
+async function showReceipt(saleId, isReprint) {
+  const [saleRes, setRes] = await Promise.all([
+    supabaseClient.from("sales")
+      .select("sale_id, sale_no, sale_date, customer_name, cashier_name, subtotal, discount, total_amount, status, prescriptions(prescription_no), sale_items(medicine_id, quantity, unit_price, medicines(medicine_name, strength)), payments(payment_method, amount, amount_tendered, change_amount, reference_no)")
+      .eq("sale_id", saleId).single(),
+    supabaseClient.from("settings").select("key, value").in("key", ["pharmacy_name", "pharmacy_address", "receipt_footer"]),
+  ]);
+  if (saleRes.error) { alert("Could not load the receipt: " + saleRes.error.message); return; }
+
+  const cfg = {};
+  (setRes.data || []).forEach(r => { cfg[r.key] = r.value; });
+  const sale = saleRes.data;
+
+  // one receipt line per medicine and price (a sale can be taken from several batches)
+  const grouped = {};
+  sale.sale_items.forEach(i => {
+    const key = i.medicine_id + "|" + i.unit_price;
+    if (!grouped[key]) grouped[key] = { name: [i.medicines.medicine_name, i.medicines.strength].filter(Boolean).join(" "), qty: 0, price: Number(i.unit_price) };
+    grouped[key].qty += i.quantity;
+  });
+  const lines = Object.values(grouped).map(g => `
+    <div>${escapeHtml(g.name)}</div>
+    <div class="rc-row"><span>&nbsp;&nbsp;${g.qty} x ${peso(g.price)}</span><span>${peso(g.qty * g.price)}</span></div>`).join("");
+
+  const pay = (sale.payments || [])[0];
+  const row = (a, b, cls) => `<div class="rc-row ${cls || ""}"><span>${a}</span><span>${b}</span></div>`;
+  const paid = pay ? (
+    pay.payment_method === "Cash"
+      ? row("CASH", peso(pay.amount_tendered)) + row("CHANGE", peso(pay.change_amount))
+      : row(escapeHtml(pay.payment_method.toUpperCase()), peso(pay.amount)) +
+        (pay.reference_no ? row("Ref", escapeHtml(pay.reference_no)) : "")
+  ) : "";
+
+  document.getElementById("receipt-print").innerHTML = `
+    <div class="rc-center rc-bold">${escapeHtml(cfg.pharmacy_name || "PHARMACY")}</div>
+    ${cfg.pharmacy_address ? `<div class="rc-center">${escapeHtml(cfg.pharmacy_address)}</div>` : ""}
+    <div class="rc-center">SALES RECEIPT</div>
+    ${isReprint ? '<div class="rc-center">*** REPRINT ***</div>' : ""}
+    ${sale.status !== "Completed" ? `<div class="rc-center rc-bold">*** ${escapeHtml(sale.status.toUpperCase())} ***</div>` : ""}
+    <div class="rc-line"></div>
+    <div>Transaction: ${escapeHtml(sale.sale_no)}</div>
+    <div>Date: ${escapeHtml(new Date(sale.sale_date).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }))}</div>
+    ${sale.cashier_name ? `<div>Cashier: ${escapeHtml(sale.cashier_name)}</div>` : ""}
+    <div>Customer: ${escapeHtml(sale.customer_name || "Walk-in Customer")}</div>
+    ${sale.prescriptions ? `<div>Prescription: ${escapeHtml(sale.prescriptions.prescription_no)}</div>` : ""}
+    <div class="rc-line"></div>
+    ${lines}
+    <div class="rc-line"></div>
+    ${Number(sale.discount) > 0 ? row("SUBTOTAL", peso(sale.subtotal)) + row("DISCOUNT", "-" + peso(sale.discount)) : ""}
+    ${row("TOTAL", peso(sale.total_amount), "rc-bold")}
+    ${paid}
+    <div class="rc-line"></div>
+    <div class="rc-center">${escapeHtml(cfg.receipt_footer || "THANK YOU!")}</div>`;
+
+  document.getElementById("receipt-backdrop").classList.add("open");
+}
+
+function closeReceipt() {
+  document.getElementById("receipt-backdrop").classList.remove("open");
 }
 
 function escapeHtml(str) {
