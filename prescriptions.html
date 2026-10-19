@@ -7,9 +7,10 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./js/supabase.js"></script>
+<script src="./config/supabase.js"></script>
 <script src="./js/auth.js"></script>
-<link rel="stylesheet" href="styles.css">
+<script src="./js/medicine-search.js"></script>
+<link rel="stylesheet" href="css/styles.css">
 
 <style>
   .rx-input, .rx-select {
@@ -213,17 +214,12 @@ function renderMedOptions() {
   const q = document.getElementById("med-search").value.trim().toLowerCase();
   const sel = document.getElementById("med-select");
   const hint = document.getElementById("med-hint");
-  const found = medicines.filter(m =>
-    !q ||
-    (m.medicine_code || "").toLowerCase().includes(q) ||
-    (m.medicine_name || "").toLowerCase().includes(q) ||
-    (m.generic_name || "").toLowerCase().includes(q) ||
-    (m.dosage_form || "").toLowerCase().includes(q));
+  const found = searchMedicines(medicines, q);   // shared search: js/medicine-search.js
 
   if (!found.length) {
     sel.innerHTML = '<option value="">No matching medicine</option>';
     sel.disabled = true;
-    hint.textContent = medicines.length ? "" : "There are no active medicines yet. Register some on the Inventory page first.";
+    hint.textContent = medicines.length ? "" : "There are no active medicines yet. Register some on the Medicines page first.";
     return;
   }
   sel.disabled = false;

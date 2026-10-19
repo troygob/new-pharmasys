@@ -9,7 +9,11 @@ const roleSlug = (role) => String(role || "").toLowerCase().replace(/\s+/g, "_")
 
 // Which roles may open which page. A page that is not listed is blocked for everyone except administrators.
 const PAGE_ACCESS = {
-  "index.html":              ALL_ROLES,                                   // medicines / inventory (view)
+  "dashboard.html":          ["Admin", "Pharmacist", "Manager"],
+  "index.html":              ALL_ROLES,                                   // medicines (view)
+  "inventory.html":          ["Admin", "Pharmacist", "Inventory Staff", "Manager"],
+  "expiration.html":         ["Admin", "Pharmacist", "Inventory Staff", "Manager"],
+  "reports.html":            ["Admin", "Manager"],
   "categories.html":         ["Admin", "Pharmacist"],
   "suppliers.html":          ["Admin", "Inventory Staff"],
   "medicine-suppliers.html": ["Admin", "Inventory Staff"],

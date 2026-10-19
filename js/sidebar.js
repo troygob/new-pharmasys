@@ -1,14 +1,18 @@
 // sidebar.js - shared sidebar for every page. Only shows the links the signed-in role may open.
 (async function () {
   const links = [
-    { href: "index.html",              label: "Inventory"       },
+    { href: "dashboard.html",          label: "Dashboard"       },
+    { href: "index.html",              label: "Medicines"       },
     { href: "categories.html",         label: "Categories"      },
     { href: "suppliers.html",          label: "Suppliers"       },
     { href: "medicine-suppliers.html", label: "Medicine Supply" },
+    { href: "inventory.html",          label: "Inventory"       },
     { href: "stock-in.html",           label: "Stock In"        },
     { href: "stock-adjustment.html",   label: "Stock Adjustment" },
     { href: "prescriptions.html",      label: "Prescriptions"   },
     { href: "sales.html",              label: "Sales"           },
+    { href: "expiration.html",         label: "Expiration"      },
+    { href: "reports.html",            label: "Reports"         },
     { href: "users.html",              label: "Users"           },
     { href: "settings.html",           label: "Settings"        },
   ];
