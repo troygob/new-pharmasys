@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./config/supabase.js"></script>
 <script src="./js/auth.js"></script>
+<script src="./js/medicine-search.js"></script>
 <link rel="stylesheet" href="css/styles.css">
 
 </head>
@@ -31,6 +32,56 @@
     </header>
 
     <main>
+      <!-- LAB 15: PHARMACY SALES CART -->
+      <div class="table-wrap" style="padding:1.5rem; margin-bottom:1.5rem;" data-hide="manager">
+        <h2 style="margin-top:0;">Pharmacy Sales Cart</h2>
+
+        <div class="field" style="max-width:360px;">
+          <label for="customer">Customer</label>
+          <input type="text" id="customer" maxlength="120" value="Walk-in Customer">
+        </div>
+
+        <div class="toolbar">
+          <input type="search" id="med-search" placeholder="Search medicine by code, name, generic name, category or dosage form..." oninput="renderResults()">
+        </div>
+        <div id="med-hint" style="font-size:0.82rem; color:var(--color-text-soft); margin-bottom:0.5rem;"></div>
+
+        <div style="border:1px solid var(--color-border); border-radius:var(--radius-sm); overflow:auto; margin-bottom:1.5rem;">
+          <table>
+            <thead>
+              <tr><th>Code</th><th>Medicine</th><th>Form</th><th>Price</th><th>In stock</th><th></th></tr>
+            </thead>
+            <tbody id="results-body"></tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:0 0 0.5rem;">Cart</h3>
+        <div style="border:1px solid var(--color-border); border-radius:var(--radius-sm); overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>Medicine</th><th>Qty</th><th>Price</th><th>Subtotal</th><th></th></tr>
+            </thead>
+            <tbody id="cart-body"></tbody>
+          </table>
+          <div class="empty-state" id="cart-empty">The cart is empty. Search for a medicine above and add it.</div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-top:1rem;">
+          <div>
+            <div style="font-size:0.82rem; color:var(--color-text-soft);"><span id="cart-count">0</span> item(s) in cart</div>
+            <div style="font-size:1.5rem; font-weight:700;">TOTAL <span id="cart-total">&#8369;0.00</span></div>
+          </div>
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn-secondary" onclick="clearCart()">Clear cart</button>
+            <button class="btn-primary" id="checkout-btn" disabled title="Payment and checkout are built in Labs 17-18">Checkout</button>
+          </div>
+        </div>
+        <div style="font-size:0.78rem; color:var(--color-text-soft); margin-top:0.5rem;">
+          Checkout, payment and inventory deduction are added in Labs 17-18. Prices shown are those of the batch that expires first.
+        </div>
+      </div>
+
+      <h2 style="margin:0 0 0.75rem;">Sales history</h2>
       <div class="stats">
         <div class="stat-card">
           <div class="value" id="stat-total">0</div>
@@ -129,6 +180,112 @@ function renderStats() {
     todays.reduce((sum, s) => sum + Number(s.total_amount), 0).toFixed(2);
 }
 
+/* ======================================================================
+   LAB 15: SALES CART  (nothing is saved yet - checkout comes in Labs 17-18)
+   ====================================================================== */
+let catalog = [];   // active medicines with stock + the price of their earliest-expiring batch
+let cart = [];      // { medicine_id, code, label, price, max, qty, rx }
+
+const peso = (n) => "\u20B1" + Number(n).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const medLabel = (m) => [m.medicine_name, m.strength].filter(Boolean).join(" ");
+
+async function loadCatalog() {
+  const d = new Date();
+  const today = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+
+  const [meds, batches] = await Promise.all([
+    supabaseClient.from("v_medicine_stock")
+      .select("medicine_id, medicine_code, medicine_name, generic_name, strength, dosage_form, category_name, requires_prescription, quantity_on_hand")
+      .eq("status", "Active").order("medicine_name"),
+    supabaseClient.from("inventory")
+      .select("medicine_id, selling_price, expiration_date, inventory_id")
+      .gt("quantity", 0).gte("expiration_date", today)
+      .order("expiration_date").order("inventory_id"),
+  ]);
+  if (meds.error || batches.error) {
+    console.error("Could not load medicines:", (meds.error || batches.error).message);
+    document.getElementById("med-hint").textContent = "Could not load medicines.";
+    return;
+  }
+
+  const price = {};                       // first batch per medicine = earliest expiry
+  batches.data.forEach(b => { if (!(b.medicine_id in price)) price[b.medicine_id] = Number(b.selling_price); });
+
+  catalog = meds.data
+    .filter(m => m.quantity_on_hand > 0 && m.medicine_id in price)   // expired / empty stock cannot be sold
+    .map(m => ({ ...m, price: price[m.medicine_id] }));
+  renderResults();
+}
+
+function renderResults() {
+  const q = document.getElementById("med-search").value.trim();
+  const found = searchMedicines(catalog, q);          // shared search: js/medicine-search.js
+  const shown = found.slice(0, 8);
+
+  document.getElementById("med-hint").textContent = !catalog.length
+    ? "No medicines are available for sale (no active medicine with unexpired stock)."
+    : found.length + " available medicine" + (found.length === 1 ? "" : "s") + (found.length > 8 ? " (showing first 8 - refine your search)" : "");
+
+  document.getElementById("results-body").innerHTML = shown.map(m => `
+    <tr>
+      <td>${escapeHtml(m.medicine_code)}</td>
+      <td>${escapeHtml(medLabel(m))}${m.requires_prescription ? ' <span class="badge badge-warning">Rx</span>' : ""}</td>
+      <td>${escapeHtml(m.dosage_form || "")}</td>
+      <td>${peso(m.price)}</td>
+      <td>${m.quantity_on_hand}</td>
+      <td><button class="btn-primary btn-small" onclick="addToCart(${m.medicine_id})">Add</button></td>
+    </tr>`).join("");
+}
+
+function addToCart(medicineId) {
+  const m = catalog.find(x => x.medicine_id === medicineId);
+  if (!m) return;
+  const line = cart.find(c => c.medicine_id === medicineId);
+  if (line) {
+    if (line.qty >= line.max) { alert("Only " + line.max + " unit(s) of " + line.label + " are in stock."); return; }
+    line.qty++;
+  } else {
+    cart.push({ medicine_id: m.medicine_id, code: m.medicine_code, label: medLabel(m),
+                price: m.price, max: m.quantity_on_hand, qty: 1, rx: m.requires_prescription });
+  }
+  renderCart();
+}
+
+function changeQty(index, value) {
+  const line = cart[index];
+  const qty = Number(value);
+  if (!Number.isInteger(qty) || qty <= 0) { alert("Quantity must be a whole number greater than zero."); }
+  else if (qty > line.max) { alert("Only " + line.max + " unit(s) of " + line.label + " are in stock."); line.qty = line.max; }
+  else { line.qty = qty; }
+  renderCart();
+}
+
+function removeFromCart(index) {
+  cart.splice(index, 1);
+  renderCart();
+}
+
+function clearCart() {
+  if (cart.length && !confirm("Remove every medicine from the cart?")) return;
+  cart = [];
+  renderCart();
+}
+
+function renderCart() {
+  document.getElementById("cart-empty").style.display = cart.length ? "none" : "block";
+  document.getElementById("cart-body").innerHTML = cart.map((c, i) => `
+    <tr>
+      <td>${escapeHtml(c.label)}${c.rx ? ' <span class="badge badge-warning">Rx</span>' : ""}</td>
+      <td><input type="number" min="1" max="${c.max}" step="1" value="${c.qty}" style="width:5rem; padding:0.35rem 0.5rem; border:1px solid var(--color-border); border-radius:var(--radius-sm);" onchange="changeQty(${i}, this.value)"></td>
+      <td>${peso(c.price)}</td>
+      <td>${peso(c.price * c.qty)}</td>
+      <td><button class="btn-danger btn-small" onclick="removeFromCart(${i})">Remove</button></td>
+    </tr>`).join("");
+
+  document.getElementById("cart-count").textContent = cart.reduce((n, c) => n + c.qty, 0);
+  document.getElementById("cart-total").textContent = peso(cart.reduce((sum, c) => sum + c.price * c.qty, 0));
+}
+
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
@@ -139,6 +296,8 @@ function escapeHtml(str) {
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (!session) { window.location.href = "login-page.html"; return; }
   loadSales();
+  loadCatalog();
+  renderCart();
 })();
 </script>
 
