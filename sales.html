@@ -10,6 +10,7 @@
 <script src="./config/supabase.js"></script>
 <script src="./js/auth.js"></script>
 <script src="./js/medicine-search.js"></script>
+<script src="./js/sales-calculations.js"></script>
 <link rel="stylesheet" href="css/styles.css">
 <style>
   /* Lab 19: only the receipt is printed */
@@ -414,17 +415,10 @@ function clearCart() {
 
 // What checkout will charge for qty units of a medicine (stock is taken from the earliest-expiring batches first)
 function fefoTotal(medicineId, qty) {
-  let left = qty, sum = 0;
-  for (const b of (batchesBy[medicineId] || [])) {
-    if (left <= 0) break;
-    const take = Math.min(left, b.qty);
-    sum += take * b.price;
-    left -= take;
-  }
-  return Math.round(sum * 100) / 100;
+  return calculateFefoTotal(batchesBy[medicineId] || [], qty);
 }
 const lineTotal = (c) => fefoTotal(c.medicine_id, c.qty);
-const cartTotal = () => Math.round(cart.reduce((sum, c) => sum + lineTotal(c), 0) * 100) / 100;
+const cartTotal = () => calculateCartTotal(batchesBy, cart);
 
 function renderCart() {
   const banner = document.getElementById("rx-banner");

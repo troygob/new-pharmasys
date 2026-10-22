@@ -27,7 +27,7 @@ const PAGE_ACCESS = {
 
 // Where each role lands after logging in
 const LANDING_PAGE = {
-  "Admin":           "index.html",
+  "Admin":           "course.html",
   "Pharmacist":      "index.html",
   "Cashier":         "sales.html",
   "Inventory Staff": "stock-in.html",

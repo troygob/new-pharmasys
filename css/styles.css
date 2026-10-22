@@ -66,6 +66,22 @@ main {
   margin: 0 auto;
   padding: 2rem;
 }
+.course-tables-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.4fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+.course-tables-layout section { min-width: 0; }
+.course-tables-layout .toolbar select { max-width: 100%; }
+.course-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.course-section-heading h2 { margin: 0; }
 
 /* ---------- Sidebar ---------- */
 .app-layout {
@@ -154,6 +170,47 @@ main {
     min-height: 1.2em;
     margin-top: 0.4rem;
 }
+.demo-credentials {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+.demo-credentials-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.demo-credentials-heading h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.demo-credentials-heading span {
+  color: var(--color-text-soft);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.demo-credential-row {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+.demo-credential-row + .demo-credential-row {
+  margin-top: 0.55rem;
+}
+.demo-credential-row > span {
+  color: var(--color-text-soft);
+}
+.demo-credential-row code {
+  color: var(--color-text);
+  font-size: inherit;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
 
 
 /* ---------- Connection banner ---------- */
@@ -230,6 +287,11 @@ button:hover { opacity: 0.85; }
   overflow: hidden;
 }
 table { width: 100%; border-collapse: collapse; }
+.courses-table { table-layout: fixed; }
+.courses-table th:nth-child(1), .courses-table td:nth-child(1) { width: 22%; }
+.courses-table th:nth-child(2), .courses-table td:nth-child(2) { width: 25%; }
+.courses-table th:nth-child(3), .courses-table td:nth-child(3) { width: 24%; }
+.courses-table th:nth-child(4), .courses-table td:nth-child(4) { width: 29%; }
 th, td {
   text-align: left;
   padding: 0.8rem 1rem;
@@ -241,6 +303,17 @@ th {
   font-weight: 600;
   font-size: 0.78rem;
 }
+.course-sort {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.course-sort:hover, .course-sort:focus-visible { color: var(--color-primary); }
+.course-sort:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: #F0FAFB; }
 
@@ -278,6 +351,39 @@ tr:hover td { background: #F0FAFB; }
   padding: 1.75rem;
   width: 100%;
   max-width: 440px;
+}
+.assignment-modal {
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  border: 1px solid rgba(18, 56, 59, 0.08);
+  box-shadow: 0 1.25rem 3.5rem rgba(18, 56, 59, 0.2);
+}
+.assignment-modal .field label {
+  margin-bottom: 0.45rem;
+  font-weight: 600;
+}
+.assignment-modal .field input,
+.assignment-modal .field select {
+  display: block;
+  width: 100%;
+  min-height: 2.85rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.95rem;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.assignment-modal .field input[readonly] {
+  background-color: #F5FAFA;
+}
+.assignment-modal .field input:focus,
+.assignment-modal .field select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(0, 131, 138, 0.14);
 }
 .modal h2 {
   font-family: var(--font-head);
@@ -325,6 +431,10 @@ tr:hover td { background: #F0FAFB; }
 
 @media (max-width: 1100px) {
   .stockin-layout { grid-template-columns: 1fr; }
+  .course-tables-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .course-section-heading { align-items: flex-start; flex-direction: column; }
 }
 
 /* Signed-in user box at the bottom of the sidebar */

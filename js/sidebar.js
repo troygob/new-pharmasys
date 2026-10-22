@@ -2,6 +2,7 @@
 (async function () {
   const links = [
     { href: "dashboard.html",          label: "Dashboard"       },
+    { href: "course.html",             label: "Course Management"  },
     { href: "index.html",              label: "Medicines"       },
     { href: "categories.html",         label: "Categories"      },
     { href: "suppliers.html",          label: "Suppliers"       },
