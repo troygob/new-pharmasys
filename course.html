@@ -141,7 +141,7 @@ let courseSort = { key: "id", direction: "asc" };
 async function loadAll() {
   const [courseResult, studentResult] = await Promise.all([
     supabaseClient.from("course").select("course_id, course_name, course_created").order("course_name"),
-    supabaseClient.from("student").select("student_id, student_firstname, student_lastname, student_enrolldate, course_id").order("student_lastname"),
+    supabaseClient.from("student").select("student_id, student_firstname, student_lastname, student_enrolldate, course_id").order("student_id", { ascending: true }),
   ]);
   if (courseResult.error) { alert("Could not load courses: " + courseResult.error.message); return; }
   if (studentResult.error) { alert("Could not load students: " + studentResult.error.message); return; }
@@ -298,8 +298,7 @@ function openAssignmentModal(studentId) {
   courseSelect.innerHTML = '<option value="">Undecided</option>' + courses.map(course =>
     `<option value="${course.course_id}">${escapeHtml(course.course_name)}</option>`
   ).join("");
-  const unassigned = students.find(student => student.course_id == null);
-  const selectedStudentId = studentId != null ? String(studentId) : String(unassigned?.student_id ?? "new");
+  const selectedStudentId = studentId != null ? String(studentId) : "new";
   document.getElementById("assignment-form").reset();
   studentSelect.value = selectedStudentId;
   document.getElementById("assignment-enrolldate").value = todayDate();
