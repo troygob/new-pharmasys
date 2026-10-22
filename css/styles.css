@@ -447,3 +447,11 @@ tr:hover td { background: #F0FAFB; }
 }
 .sidebar-user-name { font-weight: 600; }
 .sidebar-user-role { opacity: 0.75; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
