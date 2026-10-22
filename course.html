@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Course Management Module</title>
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config/supabase.js"></script>
+<script src="./js/auth.js"></script>
+<link rel="stylesheet" href="css/styles.css">
+
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="./js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Course Management</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="stats">
+        <div class="stat-card"><div class="value" id="stat-courses">0</div><div class="label">Courses</div></div>
+        <div class="stat-card"><div class="value" id="stat-assignments">0</div><div class="label">Assigned students</div></div>
+      </div>
+
+      <div class="course-tables-layout">
+        <section>
+          <div class="course-section-heading">
+            <h2>Courses</h2>
+            <button class="btn-secondary" onclick="openCourseModal()">+ Add course</button>
+          </div>
+          <div class="table-wrap">
+            <table class="courses-table">
+              <thead><tr>
+                <th aria-sort="ascending"><button class="course-sort" type="button" data-sort="id" onclick="sortCourses('id')">Course ID</button></th>
+                <th aria-sort="none"><button class="course-sort" type="button" data-sort="name" onclick="sortCourses('name')">Course name</button></th>
+                <th aria-sort="none"><button class="course-sort" type="button" data-sort="date" onclick="sortCourses('date')">Created</button></th>
+                <th></th>
+              </tr></thead>
+              <tbody id="courses-body"></tbody>
+            </table>
+            <div class="empty-state" id="courses-empty" style="display:none;">No courses yet. Add a course to get started.</div>
+          </div>
+        </section>
+
+        <section>
+          <div class="course-section-heading">
+            <h2>Students</h2>
+            <button class="btn-primary" onclick="openAssignmentModal()">+ Assign course</button>
+          </div>
+          <div class="toolbar">
+            <input type="search" id="search" placeholder="Search course, student name or ID..." oninput="renderAssignments()">
+            <select id="course-filter" onchange="renderAssignments()" style="padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface);">
+              <option value="">All courses</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Student ID</th><th>Student</th><th>Course</th><th>Date enrolled</th><th></th></tr></thead>
+              <tbody id="assignments-body"></tbody>
+            </table>
+            <div class="empty-state" id="assignments-empty" style="display:none;">No students found.</div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<!-- Add / edit course modal -->
+<div class="modal-backdrop" id="course-modal-backdrop">
+  <div class="modal">
+    <h2 id="course-modal-title">Add course</h2>
+    <form id="course-form" onsubmit="saveCourse(event)">
+      <input type="hidden" id="course-id">
+      <div class="field">
+        <label for="course-name">Course name</label>
+        <input type="text" id="course-name" required maxlength="150" placeholder="e.g. Pharmacy Technology">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="closeCourseModal()">Cancel</button>
+        <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Student course assignment modal -->
+<div class="modal-backdrop" id="assignment-modal-backdrop">
+  <div class="modal assignment-modal">
+    <h2>Assign a course</h2>
+    <form id="assignment-form" onsubmit="saveAssignment(event)">
+      <div class="field">
+        <label for="assignment-student">Student</label>
+        <select id="assignment-student" required onchange="updateAssignmentStudentDetails()"></select>
+      </div>
+      <div id="new-student-fields" hidden>
+        <div class="field">
+          <label for="assignment-firstname">First name</label>
+          <input type="text" id="assignment-firstname" maxlength="150" autocomplete="given-name">
+        </div>
+        <div class="field">
+          <label for="assignment-lastname">Last name</label>
+          <input type="text" id="assignment-lastname" maxlength="150" autocomplete="family-name">
+        </div>
+      </div>
+      <div class="field">
+        <label for="assignment-enrolldate">Enrollment date</label>
+        <input type="date" id="assignment-enrolldate" readonly>
+      </div>
+      <div class="field">
+        <label for="assignment-course">Course (optional)</label>
+        <select id="assignment-course"></select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" onclick="closeAssignmentModal()">Cancel</button>
+        <button type="submit" class="btn-primary">Save assignment</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<script>
+let courses = [];
+let students = [];
+let courseSort = { key: "id", direction: "asc" };
+
+async function loadAll() {
+  const [courseResult, studentResult] = await Promise.all([
+    supabaseClient.from("course").select("course_id, course_name, course_created").order("course_name"),
+    supabaseClient.from("student").select("student_id, student_firstname, student_lastname, student_enrolldate, course_id").order("student_lastname"),
+  ]);
+  if (courseResult.error) { alert("Could not load courses: " + courseResult.error.message); return; }
+  if (studentResult.error) { alert("Could not load students: " + studentResult.error.message); return; }
+
+  courses = courseResult.data || [];
+  students = studentResult.data || [];
+  fillCourseFilter();
+  renderCourses();
+  renderAssignments();
+  renderStats();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : str;
+  return div.innerHTML;
+}
+
+function studentName(student) {
+  return [student.student_firstname, student.student_lastname].filter(Boolean).join(" ");
+}
+
+function fillCourseFilter() {
+  const filter = document.getElementById("course-filter");
+  const selected = filter.value;
+  filter.innerHTML = '<option value="">All courses</option>' + courses.map(course =>
+    `<option value="${course.course_id}">${escapeHtml(course.course_name)}</option>`
+  ).join("");
+  filter.value = selected;
+}
+
+function renderCourses() {
+  document.getElementById("courses-empty").style.display = courses.length ? "none" : "block";
+  const sortedCourses = [...courses].sort((a, b) => {
+    const fields = { id: "course_id", name: "course_name", date: "course_created" };
+    const first = a[fields[courseSort.key]];
+    const second = b[fields[courseSort.key]];
+    let comparison;
+    if (courseSort.key === "id") comparison = Number(first) - Number(second);
+    else comparison = String(first || "").localeCompare(String(second || ""), undefined, { numeric: true, sensitivity: "base" });
+    return comparison * (courseSort.direction === "asc" ? 1 : -1);
+  });
+  document.querySelectorAll(".course-sort").forEach(button => {
+    button.dataset.label ||= button.textContent;
+    const active = button.dataset.sort === courseSort.key;
+    const th = button.closest("th");
+    th.setAttribute("aria-sort", active ? (courseSort.direction === "asc" ? "ascending" : "descending") : "none");
+    button.setAttribute("aria-label", `${button.dataset.label}, ${active ? (courseSort.direction === "asc" ? "ascending" : "descending") : "not sorted"}`);
+    button.textContent = button.dataset.label + (active ? (courseSort.direction === "asc" ? " ^" : " v") : "");
+  });
+  document.getElementById("courses-body").innerHTML = sortedCourses.map(course => `
+    <tr>
+      <td>${course.course_id}</td>
+      <td>${escapeHtml(course.course_name)}</td>
+      <td>${course.course_created ? escapeHtml(course.course_created) : "—"}</td>
+      <td>
+        <button class="btn-secondary btn-small" onclick="editCourse(${course.course_id})">Edit</button>
+        <button class="btn-danger btn-small" onclick="removeCourse(${course.course_id})">Delete</button>
+      </td>
+    </tr>`).join("");
+}
+
+function sortCourses(key) {
+  if (courseSort.key === key) courseSort.direction = courseSort.direction === "asc" ? "desc" : "asc";
+  else courseSort = { key, direction: "asc" };
+  renderCourses();
+}
+
+function renderAssignments() {
+  const q = document.getElementById("search").value.toLowerCase().trim();
+  const courseId = document.getElementById("course-filter").value;
+  const filtered = students.filter(student => {
+    if (courseId && student.course_id != courseId) return false;
+    const course = courses.find(item => item.course_id == student.course_id);
+    return [studentName(student), student.student_id, course?.course_name]
+      .some(value => String(value || "").toLowerCase().includes(q));
+  });
+
+  document.getElementById("assignments-empty").style.display = filtered.length ? "none" : "block";
+  document.getElementById("assignments-body").innerHTML = filtered.map(student => {
+    const course = courses.find(item => item.course_id == student.course_id);
+    return `
+    <tr>
+      <td>${student.student_id}</td>
+      <td>${escapeHtml(studentName(student))}</td>
+      <td>${escapeHtml(course?.course_name || (student.course_id == null ? "Not assigned" : "Course not found"))}</td>
+      <td>${student.course_id != null && student.student_enrolldate ? escapeHtml(student.student_enrolldate) : ""}</td>
+      <td>
+        ${student.course_id == null
+          ? `<button class="btn-secondary btn-small" onclick="openAssignmentModal(${student.student_id})">Assign course</button>`
+          : `<button class="btn-secondary btn-small" onclick="editAssignment(${student.student_id})">Change course</button>
+             <button class="btn-danger btn-small" onclick="removeAssignment(${student.student_id})">Unassign</button>`}
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function renderStats() {
+  document.getElementById("stat-courses").textContent = courses.length;
+  document.getElementById("stat-assignments").textContent = students.filter(student => student.course_id != null).length;
+}
+
+function openCourseModal() {
+  document.getElementById("course-form").reset();
+  document.getElementById("course-id").value = "";
+  document.getElementById("course-modal-title").textContent = "Add course";
+  document.getElementById("course-modal-backdrop").classList.add("open");
+}
+
+function closeCourseModal() {
+  document.getElementById("course-modal-backdrop").classList.remove("open");
+}
+
+function editCourse(id) {
+  const course = courses.find(item => item.course_id == id);
+  if (!course) return;
+  document.getElementById("course-id").value = course.course_id;
+  document.getElementById("course-name").value = course.course_name;
+  document.getElementById("course-modal-title").textContent = "Edit course";
+  document.getElementById("course-modal-backdrop").classList.add("open");
+}
+
+async function saveCourse(event) {
+  event.preventDefault();
+  const id = document.getElementById("course-id").value;
+  const courseName = document.getElementById("course-name").value.trim();
+  if (!courseName) return;
+  const result = id
+    ? await supabaseClient.from("course").update({ course_name: courseName }).eq("course_id", id)
+    : await supabaseClient.from("course").insert({ course_name: courseName });
+  if (result.error) { alert("Could not save course: " + result.error.message); return; }
+  closeCourseModal();
+  await loadAll();
+}
+
+async function removeCourse(id) {
+  const course = courses.find(item => item.course_id == id);
+  if (!course || !confirm(`Delete the course "${course.course_name}"?`)) return;
+  const { error } = await supabaseClient.from("course").delete().eq("course_id", id);
+  if (error) {
+    alert("Could not delete course. Unassign all students from it first. " + error.message);
+    return;
+  }
+  await loadAll();
+}
+
+function openAssignmentModal(studentId) {
+  if (!courses.length) { alert("Add a course before assigning students."); return; }
+  const studentSelect = document.getElementById("assignment-student");
+  const courseSelect = document.getElementById("assignment-course");
+  studentSelect.innerHTML = '<option value="new">N/A — create new student</option>' + students.map(student =>
+    `<option value="${student.student_id}">${escapeHtml(studentName(student))} (#${student.student_id})</option>`
+  ).join("");
+  courseSelect.innerHTML = '<option value="">Undecided</option>' + courses.map(course =>
+    `<option value="${course.course_id}">${escapeHtml(course.course_name)}</option>`
+  ).join("");
+  const unassigned = students.find(student => student.course_id == null);
+  const selectedStudentId = studentId != null ? String(studentId) : String(unassigned?.student_id ?? "new");
+  document.getElementById("assignment-form").reset();
+  studentSelect.value = selectedStudentId;
+  document.getElementById("assignment-enrolldate").value = todayDate();
+  updateAssignmentStudentDetails();
+  document.getElementById("assignment-modal-backdrop").classList.add("open");
+}
+
+function todayDate() {
+  const now = new Date();
+  return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
+}
+
+function updateAssignmentStudentDetails() {
+  const studentId = document.getElementById("assignment-student").value;
+  const isNewStudent = studentId === "new";
+  const newStudentFields = document.getElementById("new-student-fields");
+  newStudentFields.hidden = !isNewStudent;
+  document.getElementById("assignment-firstname").required = isNewStudent;
+  document.getElementById("assignment-lastname").required = isNewStudent;
+}
+
+function closeAssignmentModal() {
+  document.getElementById("assignment-modal-backdrop").classList.remove("open");
+}
+
+function editAssignment(studentId) {
+  const student = students.find(item => item.student_id == studentId);
+  if (!student) return;
+  openAssignmentModal(studentId);
+  document.getElementById("assignment-course").value = student.course_id;
+}
+
+async function saveAssignment(event) {
+  event.preventDefault();
+  const studentId = document.getElementById("assignment-student").value;
+  const courseId = document.getElementById("assignment-course").value;
+  const assignment = {
+    course_id: courseId ? Number(courseId) : null,
+    student_enrolldate: document.getElementById("assignment-enrolldate").value,
+  };
+  const result = studentId === "new"
+    ? await supabaseClient.from("student").insert({
+        ...assignment,
+        student_firstname: document.getElementById("assignment-firstname").value.trim(),
+        student_lastname: document.getElementById("assignment-lastname").value.trim(),
+      })
+    : await supabaseClient.from("student").update(assignment).eq("student_id", studentId);
+  const { error } = result;
+  if (error) { alert("Could not assign course: " + error.message); return; }
+  closeAssignmentModal();
+  await loadAll();
+}
+
+async function removeAssignment(studentId) {
+  const student = students.find(item => item.student_id == studentId);
+  if (!student || !confirm(`Unassign ${studentName(student)} from this course?`)) return;
+  const { error } = await supabaseClient.from("student")
+    .update({ course_id: null }).eq("student_id", studentId);
+  if (error) { alert("Could not unassign student: " + error.message); return; }
+  await loadAll();
+}
+
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) { window.location.href = "login-page.html"; return; }
+  await loadAll();
+})();
+</script>
+
+</body>
+</html>
