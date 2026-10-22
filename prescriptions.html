@@ -7,9 +7,10 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./js/supabase.js"></script>
+<script src="./config/supabase.js"></script>
 <script src="./js/auth.js"></script>
-<link rel="stylesheet" href="styles.css">
+<script src="./js/medicine-search.js"></script>
+<link rel="stylesheet" href="css/styles.css">
 
 <style>
   .rx-input, .rx-select {
@@ -26,6 +27,24 @@
   .rx-detail dt { color: var(--color-text-soft); }
   .rx-detail dd { margin: 0; }
   @media (max-width: 600px) { .rx-row { grid-template-columns: 1fr; } }
+
+  /* Lab 14: printable prescription */
+  #rx-print { font-family: Georgia, "Times New Roman", serif; color: #000; background: #fff; padding: 1.5rem; border: 1px dashed var(--color-border); }
+  #rx-print h1 { margin: 0; font-size: 1.3rem; text-align: center; }
+  #rx-print .rp-center { text-align: center; }
+  #rx-print .rp-line { border-top: 2px solid #000; margin: 0.8rem 0; }
+  #rx-print dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0 0 1rem; font-size: 0.95rem; }
+  #rx-print dt { font-weight: 700; }
+  #rx-print dd { margin: 0; }
+  #rx-print table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  #rx-print th, #rx-print td { border-bottom: 1px solid #999; padding: 0.4rem 0.5rem; text-align: left; }
+  #rx-print .rp-sign { margin-top: 3rem; width: 16rem; border-top: 1px solid #000; padding-top: 0.2rem; font-size: 0.85rem; }
+  @media print {
+    body * { visibility: hidden !important; }
+    #rx-print, #rx-print * { visibility: visible !important; }
+    #rx-print { position: absolute; left: 0; top: 0; width: 100%; border: none; }
+    .modal-backdrop { background: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -126,24 +145,44 @@
         <!-- RIGHT: recent prescriptions -->
         <div>
           <div class="table-wrap" style="overflow-x:auto; padding:1.5rem;">
-            <h2 style="margin-top:0;">Recent prescriptions</h2>
-            <div class="toolbar" style="margin-bottom:1rem;">
-              <input type="search" id="list-search" placeholder="Search by Rx no. or patient..." oninput="renderList()">
+            <h2 style="margin-top:0;">Prescriptions</h2>
+            <div class="toolbar" style="margin-bottom:0.5rem;">
+              <input type="search" id="list-search" placeholder="Search by Rx no., patient or prescriber..." oninput="onListSearch()">
+              <select id="status-filter" onchange="loadList()" class="rx-select" style="width:auto;">
+                <option value="">All statuses</option>
+                <option>Pending</option>
+                <option>Partially Dispensed</option>
+                <option>Fully Dispensed</option>
+                <option>Cancelled</option>
+              </select>
             </div>
+            <div class="rx-hint" id="list-hint" style="margin:0 0 0.75rem;"></div>
             <table>
               <thead><tr><th>Rx no.</th><th>Date</th><th>Patient</th><th>Items</th><th>Status</th><th></th></tr></thead>
               <tbody id="list-body"></tbody>
             </table>
-            <div class="empty-state" id="list-empty" style="display:none;">No prescriptions recorded yet.</div>
+            <div class="empty-state" id="list-empty" style="display:none;">No prescriptions found.</div>
           </div>
 
           <div class="table-wrap rx-detail" id="detail" style="display:none;"></div>
+          <div class="table-wrap rx-detail" id="history" style="display:none; overflow-x:auto;"></div>
         </div>
 
       </div>
     </main>
   </div>
 
+</div>
+
+<!-- Lab 14: prescription preview / print -->
+<div class="modal-backdrop" id="rx-print-backdrop">
+  <div class="modal" style="max-width:620px; max-height:92vh; overflow:auto;">
+    <div id="rx-print"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" onclick="closePreview()">Close</button>
+      <button type="button" class="btn-primary" onclick="window.print()">Print prescription</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -156,6 +195,8 @@ let medicines = [];     // active medicines for the picker
 let items = [];         // lines on the prescription being built: { medicine_id, label, quantity, instructions }
 let prescriptions = []; // recent prescriptions for the list
 let isManager = false;
+let currentRx = null;   // prescription shown in the detail panel
+let searchTimer = null;
 
 /* ======================================================================
    2) HELPERS
@@ -213,17 +254,12 @@ function renderMedOptions() {
   const q = document.getElementById("med-search").value.trim().toLowerCase();
   const sel = document.getElementById("med-select");
   const hint = document.getElementById("med-hint");
-  const found = medicines.filter(m =>
-    !q ||
-    (m.medicine_code || "").toLowerCase().includes(q) ||
-    (m.medicine_name || "").toLowerCase().includes(q) ||
-    (m.generic_name || "").toLowerCase().includes(q) ||
-    (m.dosage_form || "").toLowerCase().includes(q));
+  const found = searchMedicines(medicines, q);   // shared search: js/medicine-search.js
 
   if (!found.length) {
     sel.innerHTML = '<option value="">No matching medicine</option>';
     sel.disabled = true;
-    hint.textContent = medicines.length ? "" : "There are no active medicines yet. Register some on the Inventory page first.";
+    hint.textContent = medicines.length ? "" : "There are no active medicines yet. Register some on the Medicines page first.";
     return;
   }
   sel.disabled = false;
@@ -349,24 +385,36 @@ function clearForm() {
 /* ======================================================================
    7) RECENT PRESCRIPTIONS + DETAILS
    ====================================================================== */
+function onListSearch() {            // wait until the person stops typing, then search the database
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadList, 250);
+}
+
 async function loadList() {
-  const { data, error } = await supabaseClient
+  const q = document.getElementById("list-search").value.replace(/[%_\\",()*]/g, " ").trim();
+  const status = document.getElementById("status-filter").value;
+
+  let query = supabaseClient
     .from("prescriptions")
     .select("prescription_id, prescription_no, patient_name, doctor_name, prescription_date, status, prescription_items(prescription_item_id)")
     .order("prescription_id", { ascending: false }).limit(50);
+  if (status) query = query.eq("status", status);
+  if (q) {
+    const like = '"%' + q + '%"';
+    query = query.or("prescription_no.ilike." + like + ",patient_name.ilike." + like + ",doctor_name.ilike." + like);
+  }
+
+  const { data, error } = await query;
   if (error) { console.error("Error loading prescriptions:", error.message); return; }
   prescriptions = data;
+  document.getElementById("list-hint").textContent =
+    data.length + " prescription" + (data.length === 1 ? "" : "s") + " shown" + (data.length === 50 ? " (latest 50 - refine your search)" : "");
   renderList();
 }
 
 function renderList() {
-  const q = document.getElementById("list-search").value.trim().toLowerCase();
-  const filtered = prescriptions.filter(p =>
-    (p.prescription_no || "").toLowerCase().includes(q) ||
-    (p.patient_name || "").toLowerCase().includes(q));
-
-  document.getElementById("list-empty").style.display = filtered.length ? "none" : "block";
-  document.getElementById("list-body").innerHTML = filtered.map(p => `
+  document.getElementById("list-empty").style.display = prescriptions.length ? "none" : "block";
+  document.getElementById("list-body").innerHTML = prescriptions.map(p => `
     <tr>
       <td>${escapeHtml(p.prescription_no)}</td>
       <td>${escapeHtml(p.prescription_date)}</td>
@@ -385,6 +433,8 @@ async function viewPrescription(id) {
     .eq("prescription_id", id).single();
   if (error) { alert("Could not load the prescription: " + error.message); return; }
 
+  currentRx = data;
+  document.getElementById("history").style.display = "none";
   box.style.display = "block";
   box.innerHTML = `
     <h2 style="margin-top:0;">${escapeHtml(data.prescription_no)} ${statusBadge(data.status)}</h2>
@@ -404,8 +454,99 @@ async function viewPrescription(id) {
           <td>${escapeHtml(i.dosage_instructions || "")}</td>
         </tr>`).join("")}</tbody>
     </table>
-    <div style="margin-top:1rem;"><button class="btn-secondary btn-small" onclick="document.getElementById('detail').style.display='none'">Close</button></div>`;
+    <div style="margin-top:1rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <button class="btn-primary btn-small" onclick="openPreview()">Preview / Print</button>
+      <button class="btn-secondary btn-small" onclick="showPatientHistory()">Patient history</button>
+      ${data.status === "Pending" && !isManager ? `<button class="btn-danger btn-small" style="border:1px solid var(--color-danger);" onclick="cancelPrescription(${data.prescription_id})">Cancel prescription</button>` : ""}
+      <button class="btn-secondary btn-small" onclick="document.getElementById('detail').style.display='none'; document.getElementById('history').style.display='none';">Close</button>
+    </div>`;
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+/* ======================================================================
+   LAB 14: PREVIEW, PRINT, PATIENT HISTORY, CANCEL
+   ====================================================================== */
+async function openPreview() {
+  const rx = currentRx;
+  if (!rx) return;
+  const { data: cfg } = await supabaseClient.from("settings").select("key, value").in("key", ["pharmacy_name", "pharmacy_address"]);
+  const set = {}; (cfg || []).forEach(r => { set[r.key] = r.value; });
+
+  document.getElementById("rx-print").innerHTML = `
+    <h1>${escapeHtml(set.pharmacy_name || "PHARMACY")}</h1>
+    ${set.pharmacy_address ? `<div class="rp-center">${escapeHtml(set.pharmacy_address)}</div>` : ""}
+    <div class="rp-center" style="font-weight:700; letter-spacing:0.1em; margin-top:0.3rem;">PRESCRIPTION</div>
+    <div class="rp-line"></div>
+    <dl>
+      <dt>Prescription no.</dt><dd>${escapeHtml(rx.prescription_no)}</dd>
+      <dt>Date</dt><dd>${escapeHtml(rx.prescription_date)}</dd>
+      <dt>Patient</dt><dd>${escapeHtml(rx.patient_name)}${rx.patient_contact ? " (" + escapeHtml(rx.patient_contact) + ")" : ""}</dd>
+      <dt>Prescriber</dt><dd>${escapeHtml(rx.doctor_name)}${rx.prescriber_license ? " - License " + escapeHtml(rx.prescriber_license) : ""}</dd>
+      <dt>Status</dt><dd>${escapeHtml(rx.status)}</dd>
+    </dl>
+    <table>
+      <thead><tr><th>#</th><th>Medicine</th><th>Quantity</th><th>Instructions</th></tr></thead>
+      <tbody>${(rx.prescription_items || []).map((i, n) => `
+        <tr>
+          <td>${n + 1}</td>
+          <td>${escapeHtml(i.medicines ? i.medicines.medicine_name + (i.medicines.strength ? " " + i.medicines.strength : "") + (i.medicines.dosage_form ? " (" + i.medicines.dosage_form + ")" : "") : "-")}</td>
+          <td>${i.quantity}</td>
+          <td>${escapeHtml(i.dosage_instructions || "")}</td>
+        </tr>`).join("")}</tbody>
+    </table>
+    ${rx.notes ? `<p><strong>Notes:</strong> ${escapeHtml(rx.notes)}</p>` : ""}
+    <div class="rp-sign">Prescriber's signature</div>
+    <div style="font-size:0.75rem; margin-top:1rem;">Printed ${escapeHtml(new Date().toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }))}</div>`;
+  document.getElementById("rx-print-backdrop").classList.add("open");
+}
+
+function closePreview() {
+  document.getElementById("rx-print-backdrop").classList.remove("open");
+}
+
+// Every prescription recorded for this patient name (the system has no separate patient table)
+async function showPatientHistory() {
+  if (!currentRx) return;
+  const name = currentRx.patient_name;
+  const box = document.getElementById("history");
+  const { data, error } = await supabaseClient
+    .from("prescriptions")
+    .select("prescription_id, prescription_no, prescription_date, doctor_name, status, prescription_items(quantity, quantity_dispensed, medicines(medicine_name, strength))")
+    .ilike("patient_name", name.replace(/[\\%_]/g, "\\$&"))
+    .order("prescription_date", { ascending: false }).order("prescription_id", { ascending: false });
+  if (error) { alert("Could not load the patient history: " + error.message); return; }
+
+  box.style.display = "block";
+  box.innerHTML = `
+    <h2 style="margin-top:0;">Prescription history - ${escapeHtml(name)}</h2>
+    <div class="rx-hint" style="margin-bottom:0.75rem;">${data.length} prescription${data.length === 1 ? "" : "s"}. Patients are matched by name.</div>
+    <table>
+      <thead><tr><th>Rx no.</th><th>Date</th><th>Prescriber</th><th>Medicines</th><th>Status</th><th></th></tr></thead>
+      <tbody>${data.map(r => `
+        <tr>
+          <td>${escapeHtml(r.prescription_no)}</td>
+          <td>${escapeHtml(r.prescription_date)}</td>
+          <td>${escapeHtml(r.doctor_name)}</td>
+          <td>${(r.prescription_items || []).map(i => escapeHtml((i.medicines ? i.medicines.medicine_name + (i.medicines.strength ? " " + i.medicines.strength : "") : "?") + " x" + i.quantity + " (" + i.quantity_dispensed + " dispensed)")).join("<br>")}</td>
+          <td>${statusBadge(r.status)}</td>
+          <td><button class="btn-secondary btn-small" onclick="viewPrescription(${r.prescription_id})">View</button></td>
+        </tr>`).join("")}</tbody>
+    </table>
+    <div style="margin-top:1rem;"><button class="btn-secondary btn-small" onclick="document.getElementById('history').style.display='none'">Close</button></div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// Only a prescription with nothing dispensed yet can be cancelled
+async function cancelPrescription(id) {
+  if (!currentRx || currentRx.prescription_id !== id) return;
+  if (!confirm("Cancel prescription " + currentRx.prescription_no + "? It can no longer be dispensed.")) return;
+  const { data, error } = await supabaseClient
+    .from("prescriptions").update({ status: "Cancelled" })
+    .eq("prescription_id", id).eq("status", "Pending").select("prescription_id");
+  if (error) { alert("Could not cancel the prescription: " + error.message); return; }
+  if (!data || !data.length) { alert("This prescription is no longer Pending, so it cannot be cancelled."); }
+  await loadList();
+  viewPrescription(id);
 }
 
 /* ======================================================================

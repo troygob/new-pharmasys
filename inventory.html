@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Inventory</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config/supabase.js"></script>
+<script src="./js/auth.js"></script>
+<script src="./js/medicine-search.js"></script>
+<link rel="stylesheet" href="css/styles.css">
+
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="./js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Inventory</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="stats">
+        <div class="stat-card">
+          <div class="value" id="stat-units">0</div>
+          <div class="label">Units on hand (not expired)</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-value">0.00</div>
+          <div class="label">Stock value at cost (not expired)</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-low">0</div>
+          <div class="label">Low-stock medicines</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-expired">0</div>
+          <div class="label">Expired batches still in stock</div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <button type="button" id="tab-batches" class="btn-primary" onclick="setView('batches')">Batches</button>
+        <button type="button" id="tab-low" class="btn-secondary" onclick="setView('low')">Low-stock medicines</button>
+      </div>
+
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search by code, name, generic name, category, dosage form, strength or batch..." oninput="render()">
+        <select id="cat-filter" onchange="render()" style="padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface);">
+          <option value="">All categories</option>
+        </select>
+        <select id="status-filter" onchange="render()" style="padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface);">
+          <option value="">All statuses</option>
+          <option>Available</option>
+          <option>Low Stock</option>
+          <option>Expiring Soon</option>
+          <option>Expired</option>
+          <option>Empty</option>
+        </select>
+        <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.9rem;">
+          <input type="checkbox" id="hide-empty" checked onchange="render()"> Hide empty batches
+        </label>
+      </div>
+
+      <!-- BATCHES -->
+      <div id="view-batches">
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Medicine</th>
+                <th>Batch</th>
+                <th>Quantity</th>
+                <th>Cost</th>
+                <th>Selling price</th>
+                <th>Stock value</th>
+                <th>Expiration</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="batch-body"></tbody>
+          </table>
+          <div class="empty-state" id="batch-empty" style="display:none;">No batches match.</div>
+        </div>
+        <p id="summary" style="margin-top:0.75rem; color:var(--color-text-soft); font-size:0.9rem;"></p>
+      </div>
+
+      <!-- LOW STOCK -->
+      <div id="view-low" style="display:none;">
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Medicine</th>
+                <th>Category</th>
+                <th>On hand</th>
+                <th>Reorder level</th>
+                <th>Suggested reorder</th>
+              </tr>
+            </thead>
+            <tbody id="low-body"></tbody>
+          </table>
+          <div class="empty-state" id="low-empty" style="display:none;">No medicines are at or below their reorder level.</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<script>
+let batches = [];      // rows from v_inventory_batches
+let lowStock = [];     // rows from v_low_stock
+let lowIds = new Set();
+let view = "batches";
+
+const BADGE = {
+  "Available": "badge-success", "Low Stock": "badge-warning",
+  "Expiring Soon": "badge-warning", "Expired": "badge-danger", "Empty": "badge-danger",
+};
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function money(n) {
+  return "₱" + Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function medName(r) {
+  return r.medicine_code + " - " + r.medicine_name + (r.strength ? " " + r.strength : "");
+}
+
+// One status per batch
+function batchStatus(b) {
+  if (b.quantity <= 0) return "Empty";
+  if (b.expiry_status === "Expired") return "Expired";
+  if (b.expiry_status === "Expiring Soon") return "Expiring Soon";
+  if (lowIds.has(b.medicine_id)) return "Low Stock";
+  return "Available";
+}
+
+async function loadAll() {
+  const [b, l, c] = await Promise.all([
+    supabaseClient.from("v_inventory_batches").select("*").order("expiration_date", { ascending: true }),
+    supabaseClient.from("v_low_stock").select("*").order("medicine_name"),
+    supabaseClient.from("categories").select("category_name").order("category_name"),
+  ]);
+  if (b.error) { alert("Could not load inventory: " + b.error.message); return; }
+  if (l.error) { alert("Could not load low-stock list: " + l.error.message); return; }
+
+  batches = b.data || [];
+  lowStock = l.data || [];
+  lowIds = new Set(lowStock.map(r => r.medicine_id));
+
+  const sel = document.getElementById("cat-filter");
+  sel.innerHTML = '<option value="">All categories</option>' +
+    (c.data || []).map(x => `<option>${escapeHtml(x.category_name)}</option>`).join("");
+
+  renderStats();
+  render();
+}
+
+function renderStats() {
+  const sellable = batches.filter(b => b.quantity > 0 && b.expiry_status !== "Expired");
+  document.getElementById("stat-units").textContent = sellable.reduce((s, b) => s + b.quantity, 0);
+  document.getElementById("stat-value").textContent = money(sellable.reduce((s, b) => s + Number(b.stock_value), 0));
+  document.getElementById("stat-low").textContent = lowStock.length;
+  document.getElementById("stat-expired").textContent =
+    batches.filter(b => b.quantity > 0 && b.expiry_status === "Expired").length;
+}
+
+function setView(v) {
+  view = v;
+  document.getElementById("view-batches").style.display = v === "batches" ? "block" : "none";
+  document.getElementById("view-low").style.display     = v === "low" ? "block" : "none";
+  document.getElementById("tab-batches").className = v === "batches" ? "btn-primary" : "btn-secondary";
+  document.getElementById("tab-low").className     = v === "low" ? "btn-primary" : "btn-secondary";
+  // status + hide-empty filters only apply to batches
+  document.getElementById("status-filter").style.display = v === "batches" ? "" : "none";
+  document.getElementById("hide-empty").parentElement.style.display = v === "batches" ? "flex" : "none";
+  render();
+}
+
+function render() {
+  const q = document.getElementById("search").value;
+  const cat = document.getElementById("cat-filter").value;
+
+  if (view === "batches") {
+    const status = document.getElementById("status-filter").value;
+    const hideEmpty = document.getElementById("hide-empty").checked;
+    const rows = batches.filter(b => {
+      const s = batchStatus(b);
+      if (cat && b.category_name !== cat) return false;
+      if (status && s !== status) return false;
+      if (hideEmpty && s === "Empty" && status !== "Empty") return false;
+      return medicineMatches(b, q);
+    });
+
+    document.getElementById("batch-empty").style.display = rows.length ? "none" : "block";
+    document.getElementById("batch-body").innerHTML = rows.map(b => {
+      const s = batchStatus(b);
+      return `<tr>
+        <td>${escapeHtml(medName(b))}</td>
+        <td>${escapeHtml(b.batch_number)}</td>
+        <td>${b.quantity}</td>
+        <td>${money(b.purchase_price)}</td>
+        <td>${money(b.selling_price)}</td>
+        <td>${money(b.stock_value)}</td>
+        <td>${b.expiration_date}</td>
+        <td><span class="badge ${BADGE[s]}">${s}</span></td>
+      </tr>`;
+    }).join("");
+
+    const units = rows.reduce((sum, b) => sum + b.quantity, 0);
+    const value = rows.reduce((sum, b) => sum + Number(b.stock_value), 0);
+    document.getElementById("summary").textContent =
+      `Showing ${rows.length} batch${rows.length === 1 ? "" : "es"} · ${units} units · ${money(value)} at cost`;
+  } else {
+    const rows = lowStock.filter(r => (!cat || r.category_name === cat) && medicineMatches(r, q));
+    document.getElementById("low-empty").style.display = rows.length ? "none" : "block";
+    document.getElementById("low-body").innerHTML = rows.map(r => `<tr>
+      <td>${escapeHtml(medName(r))}</td>
+      <td>${escapeHtml(r.category_name || "—")}</td>
+      <td>${r.quantity_on_hand}</td>
+      <td>${r.reorder_level}</td>
+      <td>${r.suggested_reorder_qty}</td>
+    </tr>`).join("");
+  }
+}
+
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) { window.location.href = "login-page.html"; return; }
+  loadAll();
+})();
+</script>
+
+</body>
+</html>

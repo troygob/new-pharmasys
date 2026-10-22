@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Dashboard</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config/supabase.js"></script>
+<script src="./js/auth.js"></script>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  .dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1rem; }
+  a.dash-card { display: block; text-decoration: none; color: inherit; background: var(--color-surface);
+                border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1.25rem 1.4rem; }
+  a.dash-card[href]:hover { background: #F0FAFB; }
+  .dash-card .label { font-size: 0.82rem; color: var(--color-text-soft); margin-bottom: 0.4rem; }
+  .dash-card .value { font-size: 2rem; font-weight: 700; line-height: 1.1; }
+  .dash-card .note  { font-size: 0.78rem; color: var(--color-text-soft); margin-top: 0.35rem; }
+  .dash-card.warn .value { color: var(--color-warning); }
+  .dash-card.bad  .value { color: var(--color-danger); }
+  .dash-card.good .value { color: var(--color-success); }
+  .dash-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+</style>
+
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="./js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Dashboard</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="dash-bar">
+        <div style="font-size:0.85rem; color:var(--color-text-soft);" id="updated">Loading...</div>
+        <button class="btn-secondary btn-small" onclick="loadDashboard()">Refresh</button>
+      </div>
+      <div class="dash-error" id="dash-error" style="display:none; background:#FBEDEA; color:var(--color-danger); border-radius:var(--radius-sm); padding:0.7rem 1rem; margin-bottom:1rem; font-size:0.9rem;"></div>
+
+      <div class="dash-grid" id="dash-grid"></div>
+    </main>
+  </div>
+
+</div>
+
+
+<script>
+const REFRESH_SECONDS = 30;       // the numbers refresh themselves
+let me = null;
+
+const money = (n) => "\u20B1" + Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const count = (n) => Number(n || 0).toLocaleString("en-PH");
+
+// label, value, optional colour rule, note and the page a click opens (only if this role may open it)
+function cards(d) {
+  const n = (k) => Number(d[k] || 0);
+  return [
+    { label: "Today's sales",         value: money(d.todays_sales),   note: "Completed sales today",           href: "sales.html" },
+    { label: "Transactions",          value: count(d.todays_transactions), note: "Sales completed today",       href: "sales.html" },
+    { label: "Total medicines",       value: count(d.total_medicines), note: "Active medicines",               href: "index.html" },
+    { label: "Low stock",             value: count(d.low_stock),      note: "At or below reorder level",       href: "inventory.html", tone: n("low_stock") > 0 ? "warn" : "good" },
+    { label: "Expiring soon",         value: count(d.expiring_soon_batches), note: "Batches with stock",       href: "expiration.html", tone: n("expiring_soon_batches") > 0 ? "warn" : "good" },
+    { label: "Expired",               value: count(d.expired_batches), note: "Batches still in stock (blocked from sale)", href: "expiration.html", tone: n("expired_batches") > 0 ? "bad" : "good" },
+    { label: "Pending prescriptions", value: count(d.pending_prescriptions), note: "Pending or partly dispensed", href: "prescriptions.html", tone: n("pending_prescriptions") > 0 ? "warn" : "good" },
+  ];
+}
+
+function render(d) {
+  document.getElementById("dash-grid").innerHTML = cards(d).map(c => {
+    const link = c.href && canAccess(me.role, c.href) ? ` href="${c.href}"` : "";
+    return `<a class="dash-card ${c.tone || ""}"${link}>
+      <div class="label">${c.label}</div>
+      <div class="value">${c.value}</div>
+      <div class="note">${c.note}</div>
+    </a>`;
+  }).join("");
+}
+
+async function loadDashboard() {
+  const err = document.getElementById("dash-error");
+  const { data, error } = await supabaseClient.from("v_dashboard").select("*").single();
+  if (error) {
+    err.style.display = "block";
+    err.textContent = "Could not load the dashboard: " + error.message;
+    return;
+  }
+  err.style.display = "none";
+  render(data);
+  document.getElementById("updated").textContent =
+    "Live data - updated " + new Date().toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" }) +
+    " (refreshes every " + REFRESH_SECONDS + " seconds)";
+}
+
+(async () => {
+  me = await getProfile();
+  if (!me) { window.location.href = "login-page.html"; return; }
+  loadDashboard();
+  setInterval(() => { if (!document.hidden) loadDashboard(); }, REFRESH_SECONDS * 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadDashboard(); });
+})();
+</script>
+
+</body>
+</html>

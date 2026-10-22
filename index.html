@@ -7,9 +7,10 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./js/supabase.js"></script>
+<script src="./config/supabase.js"></script>
 <script src="./js/auth.js"></script>
-<link rel="stylesheet" href="styles.css">
+<script src="./js/medicine-search.js"></script>
+<link rel="stylesheet" href="css/styles.css">
 
 </head>
 <body>
@@ -24,7 +25,7 @@
       <div class="inner">
         <div>
           <h1>Pharmacy Manager</h1>
-          <div class="subtitle">Page : Inventory</div>
+          <div class="subtitle">Page : Medicines</div>
         </div>
         <button class="btn-primary" data-hide="cashier inventory_staff manager" onclick="openModal()">+ Add medicine</button>
       </div>
@@ -34,7 +35,7 @@
       <div class="stats">
         <div class="stat-card">
           <div class="value" id="stat-total">0</div>
-          <div class="label">Medicines in stock</div>
+          <div class="label">Active medicines</div>
         </div>
         <div class="stat-card">
           <div class="value" id="stat-low">0</div>
@@ -47,7 +48,7 @@
       </div>
 
       <div class="toolbar">
-        <input type="search" id="search" placeholder="Search by code, name, generic name or category..." oninput="renderTable()">
+        <input type="search" id="search" placeholder="Search by code, name, generic name, category, dosage form or strength..." oninput="renderTable()">
         <select id="status-filter" onchange="loadMedicines()" style="padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface);">
           <option value="Active">Active</option>
           <option value="Inactive">Inactive</option>
@@ -59,7 +60,9 @@
         <table>
           <thead>
             <tr>
+              <th>Code</th>
               <th>Name</th>
+              <th>Strength</th>
               <th>Category</th>
               <th>Quantity</th>
               <th>Price</th>
@@ -124,6 +127,9 @@
         <label for="reorder_level">Reorder level</label>
         <input type="number" id="reorder_level" min="0" value="10">
       </div>
+      <div class="field">
+        <label for="requires_rx"><input type="checkbox" id="requires_rx" style="width:auto; margin-right:0.5rem;">Prescription required</label>
+      </div>
       <div id="stock-fields">
         <div class="field">
           <label for="batch_number">Batch number</label>
@@ -134,7 +140,11 @@
           <input type="number" id="quantity" min="0" value="0">
         </div>
         <div class="field">
-          <label for="expiry_date">Expiry date</label>
+          <label for="cost_price">Cost price per unit (optional)</label>
+          <input type="number" id="cost_price" step="0.01" min="0" value="0">
+        </div>
+        <div class="field">
+          <label for="expiry_date">Expiry date (required when quantity is above 0)</label>
           <input type="date" id="expiry_date">
         </div>
       </div>
@@ -203,6 +213,16 @@ async function loadMedicines() {
 /* ======================================================================
    4) RENDERING
    ====================================================================== */
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+function saveErrorMessage(error) {
+  if (error.code === "23505") return "That medicine code already exists. Use a different code.";
+  return "Could not save: " + error.message;
+}
+
 function daysUntil(dateStr) {
   if (!dateStr) return Infinity;
   const diffMs = new Date(dateStr) - new Date();
@@ -221,18 +241,15 @@ function statusBadge(med) {
 function renderTable() {
   const query = document.getElementById("search").value.toLowerCase();
   const tbody = document.getElementById("table-body");
-  const filtered = medicines.filter(m =>
-    m.medicine_name.toLowerCase().includes(query) ||
-    (m.medicine_code || "").toLowerCase().includes(query) ||
-    (m.generic_name || "").toLowerCase().includes(query) ||
-    (m.category_name || "").toLowerCase().includes(query)
-  );
+  const filtered = searchMedicines(medicines, query);   // shared search: js/medicine-search.js
 
   document.getElementById("empty-state").style.display = filtered.length ? "none" : "block";
 
   tbody.innerHTML = filtered.map(m => `
     <tr>
+      <td>${escapeHtml(m.medicine_code)}</td>
       <td>${escapeHtml(m.medicine_name)}</td>
+      <td>${escapeHtml(m.strength || "—")}</td>
       <td>${escapeHtml(m.category_name || "—")}</td>
       <td>${m.quantity_on_hand}</td>
       <td>${Number(m.unit_price || 0).toFixed(2)}</td>
@@ -297,6 +314,7 @@ function editMedicine(id) {
   document.getElementById("strength").value = med.strength || "";
   document.getElementById("price").value = med.unit_price;
   document.getElementById("reorder_level").value = med.reorder_level;
+  document.getElementById("requires_rx").checked = !!med.requires_prescription;
   document.getElementById("stock-fields").style.display = "none";    // stock is per batch, not edited here
   document.getElementById("modal-backdrop").classList.add("open");
 }
@@ -314,15 +332,28 @@ async function saveMedicine(event) {
     strength:      document.getElementById("strength").value.trim() || null,
     unit_price:    parseFloat(document.getElementById("price").value) || 0,
     reorder_level: parseInt(document.getElementById("reorder_level").value, 10) || 0,
+    requires_prescription: document.getElementById("requires_rx").checked,
   };
+
+  // Validate before saving anything
+  if (!record.medicine_code || !record.medicine_name) { alert("Medicine code and name are required."); return; }
+  if (record.unit_price < 0) { alert("Price cannot be negative."); return; }
+  if (record.reorder_level < 0) { alert("Reorder level cannot be negative."); return; }
+  const openingQty = parseInt(document.getElementById("quantity").value, 10) || 0;
+  const openingExpiry = document.getElementById("expiry_date").value;
+  if (!id && openingQty < 0) { alert("Opening quantity cannot be negative."); return; }
+  if (!id && openingQty > 0) {
+    if (!openingExpiry) { alert("Enter the expiry date for the opening stock."); return; }
+    if (openingExpiry < todayStr()) { alert("That expiry date has already passed. Choose a future date."); return; }
+  }
 
   if (id) {
     const { error } = await supabaseClient.from("medicines").update(record).eq("medicine_id", id);
-    if (error) { alert("Could not save: " + error.message); return; }
+    if (error) { alert(saveErrorMessage(error)); return; }
   } else {
     const { data: created, error } = await supabaseClient
       .from("medicines").insert(record).select("medicine_id").single();
-    if (error) { alert("Could not save: " + error.message); return; }
+    if (error) { alert(saveErrorMessage(error)); return; }
 
     // Opening stock -> one inventory batch (+ audit row)
     const qty = parseInt(document.getElementById("quantity").value, 10) || 0;
@@ -331,9 +362,9 @@ async function saveMedicine(event) {
         medicine_id:     created.medicine_id,
         batch_number:    document.getElementById("batch_number").value.trim() || "INITIAL",
         quantity:        qty,
-        purchase_price:  0,
+        purchase_price:  parseFloat(document.getElementById("cost_price").value) || 0,
         selling_price:   record.unit_price,
-        expiration_date: document.getElementById("expiry_date").value || "2099-12-31",
+        expiration_date: openingExpiry,
       }).select("inventory_id").single();
       if (invErr) { alert("Medicine saved, but stock failed: " + invErr.message); loadMedicines(); return; }
 
@@ -344,7 +375,7 @@ async function saveMedicine(event) {
         quantity_change:  qty,
         reference_type:   "manual",
         user_id:          (await getProfile()).id,
-        notes:            "Opening stock added from Inventory page",
+        notes:            "Opening stock added from Medicines page",
       });
     }
   }

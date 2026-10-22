@@ -7,9 +7,9 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./js/supabase.js"></script>
+<script src="./config/supabase.js"></script>
 <script src="./js/auth.js"></script>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="css/styles.css">
 
 </head>
 <body>
@@ -31,12 +31,19 @@
         <div id="login-error" class="login-error"></div>
         <button type="submit" class="btn-primary login-submit" id="login-btn">Sign In</button>
       </form>
-
-      <div style="margin-top:1rem; text-align:center;">
-        <div style="font-size:0.85rem; margin-bottom:0.5rem;">Quick login (demo)</div>
-        <button type="button" class="btn-secondary" onclick="quickLogin('admin@gmail.com', 'admin')">Admin</button>
-        <button type="button" class="btn-secondary" onclick="quickLogin('cashier@gmail.com', 'cashier123')">Cashier</button>
-      </div>
+      <section class="demo-credentials" aria-label="Demo account credentials">
+        <div class="demo-credentials-heading">
+          <h2>Demo account</h2>
+        </div>
+        <div class="demo-credential-row">
+          <span>Email</span>
+          <code>admin@gmail.com</code>
+        </div>
+        <div class="demo-credential-row">
+          <span>Password</span>
+          <code>admin</code>
+        </div>
+      </section>
     </div>
   </div>
 </main>
@@ -92,12 +99,6 @@
     event.preventDefault();
     login(document.getElementById("email").value, document.getElementById("password").value);
   });
-
-  function quickLogin(email, password) {
-    document.getElementById("email").value = email;
-    document.getElementById("password").value = password;
-    login(email, password);
-  }
 </script>
 </body>
 </html>

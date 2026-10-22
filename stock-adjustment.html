@@ -7,9 +7,10 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./js/supabase.js"></script>
+<script src="./config/supabase.js"></script>
 <script src="./js/auth.js"></script>
-<link rel="stylesheet" href="styles.css">
+<script src="./js/medicine-search.js"></script>
+<link rel="stylesheet" href="css/styles.css">
 
 <style>
   /* Page-specific helpers (shared look comes from styles.css) */
@@ -276,10 +277,7 @@ function renderMedicineOptions() {
   const q = document.getElementById("med-search").value.trim().toLowerCase();
   const sel = document.getElementById("medicine");
   const keep = sel.value;
-  const list = medicines.filter(m =>
-    !q || m.medicine_name.toLowerCase().includes(q) ||
-    (m.medicine_code || "").toLowerCase().includes(q) ||
-    (m.generic_name || "").toLowerCase().includes(q));
+  const list = searchMedicines(medicines, q);   // shared search: js/medicine-search.js
   sel.innerHTML = list.length
     ? list.map(m => `<option value="${m.medicine_id}">${escapeHtml((m.medicine_code ? m.medicine_code + " - " : "") + medLabel(m) + (m.status === "Active" ? "" : " (inactive)"))}</option>`).join("")
     : `<option value="">No medicine found</option>`;
@@ -517,7 +515,7 @@ function renderStats() {
 
   const { data, error } = await supabaseClient
     .from("medicines")
-    .select("medicine_id, medicine_code, medicine_name, generic_name, strength, status")
+    .select("medicine_id, medicine_code, medicine_name, generic_name, strength, dosage_form, status")
     .order("medicine_name");
   if (error) { console.error("Medicines:", error.message); return; }
   medicines = data || [];

@@ -7,9 +7,9 @@
 
 <!-- Supabase client library, loaded from a CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./js/supabase.js"></script>
+<script src="./config/supabase.js"></script>
 <script src="./js/auth.js"></script>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="css/styles.css">
 
 </head>
 <body>
@@ -176,7 +176,7 @@ async function onSupplierChange() {
   if (!supplierLinks.length) {
     setMedicineOptions('<option value="">No medicines available</option>', false);
     hint.innerHTML = showAll
-      ? "There are no active medicines yet. Add some on the Inventory page first."
+      ? "There are no active medicines yet. Add some on the Medicines page first."
       : 'No medicines are assigned to this supplier yet. Assign some on the <a href="medicine-suppliers.html">Medicine Supply</a> page, or tick the box below to pick any medicine.';
     onMedicineChange();
     return;

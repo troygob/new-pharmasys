@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Reports</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config/supabase.js"></script>
+<script src="./js/auth.js"></script>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  .rp-input { padding: 0.55rem 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+              background: var(--color-surface); font: inherit; color: var(--color-text); }
+  #report-head { padding: 1.25rem 1.5rem 0.5rem; }
+  #report-head .rp-name { font-weight: 700; font-size: 1.05rem; }
+  #report-head .rp-title { font-weight: 700; letter-spacing: 0.05em; }
+  #report-head .rp-meta { font-size: 0.82rem; color: var(--color-text-soft); }
+  td.num, th.num { text-align: right; }
+  tfoot td { font-weight: 700; border-top: 2px solid var(--color-border); background: #F6FBFC; }
+  @media print {
+    body * { visibility: hidden !important; }
+    #report-area, #report-area * { visibility: visible !important; }
+    #report-area { position: absolute; left: 0; top: 0; width: 100%; }
+    #report-area .table-wrap { border: none; }
+    #report-head .rp-meta { color: #000; }
+    tr:hover td { background: none; }
+  }
+</style>
+
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="./js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Reports</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="toolbar" style="align-items:center;">
+        <select id="report-select" class="rp-input" onchange="onReportChange()" style="min-width:260px;"></select>
+        <span id="date-controls" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+          <label style="font-size:0.82rem; color:var(--color-text-soft);">From <input type="date" id="from" class="rp-input" onchange="generate()"></label>
+          <label style="font-size:0.82rem; color:var(--color-text-soft);">To <input type="date" id="to" class="rp-input" onchange="generate()"></label>
+          <button class="btn-secondary btn-small" onclick="setRange('today')">Today</button>
+          <button class="btn-secondary btn-small" onclick="setRange('week')">Last 7 days</button>
+          <button class="btn-secondary btn-small" onclick="setRange('month')">This month</button>
+        </span>
+        <span style="flex:1;"></span>
+        <button class="btn-secondary" onclick="window.print()">Print</button>
+        <button class="btn-secondary" onclick="downloadCsv()">Download CSV</button>
+      </div>
+
+      <div id="report-area">
+        <div class="table-wrap">
+          <div id="report-head"></div>
+          <div style="overflow-x:auto;">
+            <table>
+              <thead id="rp-thead"></thead>
+              <tbody id="rp-tbody"></tbody>
+              <tfoot id="rp-tfoot"></tfoot>
+            </table>
+          </div>
+          <div class="empty-state" id="rp-empty" style="display:none;">No data for this report and period.</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+
+<script>
+/* ======================================================================
+   REPORTS  (Labs 23, 24, 25)
+   Each report = { id, group, title, dates, run(from, to) -> { cols, rows, foot } }
+   col types: text (default) | int | money | date
+   ====================================================================== */
+const money = (n) => "\u20B1" + Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const num = (v) => Number(v || 0);
+function escapeHtml(str) { const d = document.createElement("div"); d.textContent = str == null ? "" : str; return d.innerHTML; }
+const medName = (r) => (r.medicine_name || "") + (r.strength ? " " + r.strength : "");
+
+const dayStr = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+const parseDay = (s) => new Date(s + "T12:00:00");
+const fmtDate = (s) => parseDay(String(s).slice(0, 10)).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
+
+// PostgREST returns at most 1000 rows per request, so read in pages
+async function fetchAll(make) {
+  const out = [];
+  for (let page = 0; page < 50; page++) {
+    const { data, error } = await make().range(page * 1000, page * 1000 + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+function groupBy(rows, keyFn, make, add) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    if (!m.has(k)) m.set(k, make(r));
+    add(m.get(k), r);
+  }
+  return [...m.values()];
+}
+// A total row: first column says TOTAL, the listed columns are summed
+function totals(rows, first, keys) {
+  const f = { [first]: "TOTAL" };
+  keys.forEach(k => { f[k] = rows.reduce((n, r) => n + num(r[k]), 0); });
+  return f;
+}
+
+/* ---------- Lab 23: sales ---------- */
+const salesDaily = (from, to) => fetchAll(() =>
+  supabaseClient.from("v_daily_sales").select("*").gte("sale_day", from).lte("sale_day", to).order("sale_day"));
+
+const TIME_COLS = [{ k: "transactions", l: "Transactions", t: "int" }, { k: "total_sales", l: "Total sales", t: "money" }];
+
+const REPORTS = [
+  { id: "daily", group: "Sales", title: "Daily sales", dates: true,
+    run: async (from, to) => {
+      const rows = (await salesDaily(from, to)).map(r => ({ sale_day: r.sale_day, transactions: num(r.transactions), total_sales: num(r.total_sales) }));
+      return { cols: [{ k: "sale_day", l: "Date", t: "date" }, ...TIME_COLS], rows, foot: totals(rows, "sale_day", ["transactions", "total_sales"]) };
+    } },
+
+  { id: "weekly", group: "Sales", title: "Weekly sales (weeks start Monday)", dates: true,
+    run: async (from, to) => {
+      const weekStart = (day) => { const d = parseDay(day); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return dayStr(d); };
+      const keyed = groupBy(await salesDaily(from, to), r => weekStart(r.sale_day),
+        r => ({ week: weekStart(r.sale_day), transactions: 0, total_sales: 0 }),
+        (g, r) => { g.transactions += num(r.transactions); g.total_sales += num(r.total_sales); }).sort((a, b) => a.week.localeCompare(b.week));
+      return { cols: [{ k: "week", l: "Week starting", t: "date" }, ...TIME_COLS], rows: keyed, foot: totals(keyed, "week", ["transactions", "total_sales"]) };
+    } },
+
+  { id: "monthly", group: "Sales", title: "Monthly sales", dates: true,
+    run: async (from, to) => {
+      const rows = groupBy(await salesDaily(from, to), r => r.sale_day.slice(0, 7),
+        r => ({ key: r.sale_day.slice(0, 7), month: new Date(r.sale_day.slice(0, 7) + "-15T12:00:00").toLocaleDateString("en-PH", { month: "long", year: "numeric" }), transactions: 0, total_sales: 0 }),
+        (g, r) => { g.transactions += num(r.transactions); g.total_sales += num(r.total_sales); }).sort((a, b) => a.key.localeCompare(b.key));
+      return { cols: [{ k: "month", l: "Month" }, ...TIME_COLS], rows, foot: totals(rows, "month", ["transactions", "total_sales"]) };
+    } },
+
+  { id: "by-medicine", group: "Sales", title: "Sales by medicine", dates: true,
+    run: async (from, to) => {
+      const data = await fetchAll(() => supabaseClient.from("v_sales_by_medicine").select("*").gte("sale_day", from).lte("sale_day", to).order("sale_day"));
+      const rows = groupBy(data, r => r.medicine_id,
+        r => ({ medicine_code: r.medicine_code, medicine: medName(r), category: r.category_name || "Uncategorized", units_sold: 0, revenue: 0 }),
+        (g, r) => { g.units_sold += num(r.units_sold); g.revenue += num(r.revenue); }).sort((a, b) => b.revenue - a.revenue);
+      return { cols: [{ k: "medicine_code", l: "Code" }, { k: "medicine", l: "Medicine" }, { k: "category", l: "Category" },
+                      { k: "units_sold", l: "Units sold", t: "int" }, { k: "revenue", l: "Revenue", t: "money" }],
+               rows, foot: totals(rows, "medicine_code", ["units_sold", "revenue"]) };
+    } },
+
+  { id: "by-category", group: "Sales", title: "Sales by category", dates: true,
+    run: async (from, to) => {
+      const data = await fetchAll(() => supabaseClient.from("v_sales_by_medicine").select("*").gte("sale_day", from).lte("sale_day", to).order("sale_day"));
+      const rows = groupBy(data, r => r.category_name || "Uncategorized",
+        r => ({ category: r.category_name || "Uncategorized", units_sold: 0, revenue: 0 }),
+        (g, r) => { g.units_sold += num(r.units_sold); g.revenue += num(r.revenue); }).sort((a, b) => b.revenue - a.revenue);
+      return { cols: [{ k: "category", l: "Category" }, { k: "units_sold", l: "Units sold", t: "int" }, { k: "revenue", l: "Revenue", t: "money" }],
+               rows, foot: totals(rows, "category", ["units_sold", "revenue"]) };
+    } },
+
+  { id: "by-cashier", group: "Sales", title: "Sales by cashier", dates: true,
+    run: async (from, to) => {
+      const data = await fetchAll(() => supabaseClient.from("v_sales_by_cashier").select("*").gte("sale_day", from).lte("sale_day", to).order("sale_day"));
+      const rows = groupBy(data, r => r.user_id || r.cashier_name,
+        r => ({ cashier: r.cashier_name || "(unknown)", transactions: 0, total_sales: 0 }),
+        (g, r) => { g.transactions += num(r.transactions); g.total_sales += num(r.total_sales); }).sort((a, b) => b.total_sales - a.total_sales);
+      return { cols: [{ k: "cashier", l: "Cashier" }, ...TIME_COLS], rows, foot: totals(rows, "cashier", ["transactions", "total_sales"]) };
+    } },
+
+  { id: "payments", group: "Sales", title: "Payment method summary", dates: true,
+    run: async (from, to) => {
+      const data = await fetchAll(() => supabaseClient.from("v_payment_summary").select("*").gte("sale_day", from).lte("sale_day", to).order("sale_day"));
+      const rows = groupBy(data, r => r.payment_method,
+        r => ({ method: r.payment_method, transactions: 0, total: 0 }),
+        (g, r) => { g.transactions += num(r.transactions); g.total += num(r.total_amount); }).sort((a, b) => b.total - a.total);
+      return { cols: [{ k: "method", l: "Payment method" }, { k: "transactions", l: "Transactions", t: "int" }, { k: "total", l: "Total received", t: "money" }],
+               rows, foot: totals(rows, "method", ["transactions", "total"]) };
+    } },
+
+  /* ---------- Lab 24: inventory ---------- */
+  { id: "current", group: "Inventory", title: "Current inventory", dates: false,
+    run: async () => {
+      const data = await fetchAll(() => supabaseClient.from("v_medicine_stock").select("*").eq("status", "Active").order("medicine_name"));
+      const rows = data.map(r => ({ medicine_code: r.medicine_code, medicine: medName(r), category: r.category_name || "Uncategorized",
+        on_hand: num(r.quantity_on_hand), reorder_level: num(r.reorder_level),
+        state: num(r.quantity_on_hand) === 0 ? "Out of stock" : r.is_low_stock ? "Low stock" : "In stock" }));
+      return { cols: [{ k: "medicine_code", l: "Code" }, { k: "medicine", l: "Medicine" }, { k: "category", l: "Category" },
+                      { k: "on_hand", l: "On hand (not expired)", t: "int" }, { k: "reorder_level", l: "Reorder level", t: "int" }, { k: "state", l: "Status" }],
+               rows, foot: totals(rows, "medicine_code", ["on_hand"]) };
+    } },
+
+  { id: "low-stock", group: "Inventory", title: "Low-stock medicines", dates: false,
+    run: async () => {
+      const data = await fetchAll(() => supabaseClient.from("v_low_stock").select("*").order("medicine_name"));
+      const rows = data.map(r => ({ medicine_code: r.medicine_code, medicine: medName(r), category: r.category_name || "Uncategorized",
+        on_hand: num(r.quantity_on_hand), reorder_level: num(r.reorder_level), suggested: num(r.suggested_reorder_qty) }));
+      return { cols: [{ k: "medicine_code", l: "Code" }, { k: "medicine", l: "Medicine" }, { k: "category", l: "Category" },
+                      { k: "on_hand", l: "Stock", t: "int" }, { k: "reorder_level", l: "Reorder level", t: "int" }, { k: "suggested", l: "Suggested reorder", t: "int" }],
+               rows, foot: null };
+    } },
+
+  { id: "stock-in", group: "Inventory", title: "Stock-in report (cancelled receipts excluded)", dates: true,
+    run: async (from, to) => {
+      const data = await fetchAll(() => supabaseClient.from("v_stock_in").select("*").gte("purchase_date", from).lte("purchase_date", to).neq("status", "Cancelled").order("purchase_date").order("purchase_no"));
+      const rows = data.map(r => ({ purchase_date: r.purchase_date, purchase_no: r.purchase_no, supplier: r.supplier_name, medicine: medName(r),
+        batch_number: r.batch_number, quantity: num(r.quantity), unit_cost: num(r.unit_cost), line_total: num(r.line_total), expiration_date: r.expiration_date }));
+      return { cols: [{ k: "purchase_date", l: "Date", t: "date" }, { k: "purchase_no", l: "Purchase no." }, { k: "supplier", l: "Supplier" }, { k: "medicine", l: "Medicine" },
+                      { k: "batch_number", l: "Batch" }, { k: "quantity", l: "Quantity", t: "int" }, { k: "unit_cost", l: "Unit cost", t: "money" },
+                      { k: "line_total", l: "Total cost", t: "money" }, { k: "expiration_date", l: "Expires", t: "date" }],
+               rows, foot: totals(rows, "purchase_date", ["quantity", "line_total"]) };
+    } },
+
+  { id: "adjustments", group: "Inventory", title: "Stock adjustment report", dates: true,
+    run: async (from, to) => {
+      const start = new Date(from + "T00:00:00"), end = new Date(to + "T00:00:00"); end.setDate(end.getDate() + 1);
+      const data = await fetchAll(() => supabaseClient.from("inventory_transactions")
+        .select("transaction_id, transaction_type, quantity_change, notes, created_at, medicines(medicine_code, medicine_name, strength), inventory(batch_number)")
+        .in("transaction_type", ["ADJUSTMENT", "RETURN", "EXPIRED", "STOCK_OUT", "DAMAGED"])
+        .gte("created_at", start.toISOString()).lt("created_at", end.toISOString()).order("created_at"));
+      const TAG = /^\[(Stock-Out|Adjustment|Damaged|Expired|Returned)\]\s*/;
+      const LABEL = { ADJUSTMENT: "Adjustment", RETURN: "Returned", EXPIRED: "Expired", STOCK_OUT: "Stock-Out", DAMAGED: "Damaged" };
+      const rows = data.map(r => { const m = TAG.exec(r.notes || "");
+        return { created_at: r.created_at, medicine: r.medicines ? r.medicines.medicine_code + " - " + medName(r.medicines) : "",
+          batch_number: r.inventory ? r.inventory.batch_number : "", type: m ? m[1] : LABEL[r.transaction_type],
+          quantity_change: num(r.quantity_change), notes: (r.notes || "").replace(TAG, "") }; });
+      return { cols: [{ k: "created_at", l: "Date", t: "date" }, { k: "medicine", l: "Medicine" }, { k: "batch_number", l: "Batch" }, { k: "type", l: "Type" },
+                      { k: "quantity_change", l: "Change", t: "int" }, { k: "notes", l: "Reason / notes" }],
+               rows, foot: totals(rows, "created_at", ["quantity_change"]) };
+    } },
+
+  { id: "valuation", group: "Inventory", title: "Inventory valuation (expired stock excluded)", dates: false,
+    run: async () => {
+      const data = await fetchAll(() => supabaseClient.from("v_inventory_batches").select("*").gt("quantity", 0).neq("expiry_status", "Expired").order("medicine_name"));
+      const rows = groupBy(data, r => r.medicine_id,
+        r => ({ medicine_code: r.medicine_code, medicine: medName(r), units: 0, cost_value: 0, retail_value: 0, margin: 0 }),
+        (g, r) => { g.units += num(r.quantity); g.cost_value += num(r.stock_value); g.retail_value += num(r.quantity) * num(r.selling_price); g.margin = g.retail_value - g.cost_value; });
+      return { cols: [{ k: "medicine_code", l: "Code" }, { k: "medicine", l: "Medicine" }, { k: "units", l: "Units", t: "int" },
+                      { k: "cost_value", l: "Value at cost", t: "money" }, { k: "retail_value", l: "Value at selling price", t: "money" }, { k: "margin", l: "Potential margin", t: "money" }],
+               rows, foot: totals(rows, "medicine_code", ["units", "cost_value", "retail_value", "margin"]) };
+    } },
+
+  { id: "supplier-purchases", group: "Inventory", title: "Supplier purchases (cancelled receipts excluded)", dates: true,
+    run: async (from, to) => {
+      const data = await fetchAll(() => supabaseClient.from("v_stock_in").select("*").gte("purchase_date", from).lte("purchase_date", to).neq("status", "Cancelled").order("purchase_no"));
+      const seen = new Map();   // supplier_id -> set of purchase numbers
+      const rows = groupBy(data, r => r.supplier_id,
+        r => ({ supplier_code: r.supplier_code, supplier: r.supplier_name, purchases: 0, units: 0, total_cost: 0, _id: r.supplier_id }),
+        (g, r) => {
+          if (!seen.has(g._id)) seen.set(g._id, new Set());
+          if (!seen.get(g._id).has(r.purchase_no)) { seen.get(g._id).add(r.purchase_no); g.purchases++; }
+          g.units += num(r.quantity); g.total_cost += num(r.line_total);
+        }).sort((a, b) => b.total_cost - a.total_cost);
+      return { cols: [{ k: "supplier_code", l: "Code" }, { k: "supplier", l: "Supplier" }, { k: "purchases", l: "Purchases", t: "int" },
+                      { k: "units", l: "Units received", t: "int" }, { k: "total_cost", l: "Total cost", t: "money" }],
+               rows, foot: totals(rows, "supplier_code", ["purchases", "units", "total_cost"]) };
+    } },
+
+  { id: "batches", group: "Inventory", title: "Batch report", dates: false,
+    run: async () => {
+      const data = await fetchAll(() => supabaseClient.from("v_inventory_batches").select("*").gt("quantity", 0).order("medicine_name").order("expiration_date"));
+      const rows = data.map(r => ({ medicine: r.medicine_code + " - " + medName(r), batch_number: r.batch_number, quantity: num(r.quantity),
+        purchase_price: num(r.purchase_price), selling_price: num(r.selling_price), date_received: r.date_received, expiration_date: r.expiration_date, expiry_status: r.expiry_status }));
+      return { cols: [{ k: "medicine", l: "Medicine" }, { k: "batch_number", l: "Batch" }, { k: "quantity", l: "Quantity", t: "int" },
+                      { k: "purchase_price", l: "Cost", t: "money" }, { k: "selling_price", l: "Selling price", t: "money" },
+                      { k: "date_received", l: "Received", t: "date" }, { k: "expiration_date", l: "Expires", t: "date" }, { k: "expiry_status", l: "Status" }],
+               rows, foot: totals(rows, "medicine", ["quantity"]) };
+    } },
+
+  /* ---------- Lab 25: expiration + prescriptions ---------- */
+  { id: "expiration", group: "Expiration and prescriptions", title: "Expiration report", dates: false,
+    run: async () => {
+      const data = await fetchAll(() => supabaseClient.from("v_inventory_batches").select("*").gt("quantity", 0).order("expiration_date").order("medicine_name"));
+      const rows = data.map(r => ({ medicine: r.medicine_code + " - " + medName(r), batch_number: r.batch_number, quantity: num(r.quantity),
+        expiration_date: r.expiration_date, expiry_status: r.expiry_status }));
+      return { cols: [{ k: "medicine", l: "Medicine" }, { k: "batch_number", l: "Batch" }, { k: "quantity", l: "Quantity", t: "int" },
+                      { k: "expiration_date", l: "Expiration", t: "date" }, { k: "expiry_status", l: "Status" }],
+               rows, foot: totals(rows, "medicine", ["quantity"]) };
+    } },
+
+  { id: "prescriptions", group: "Expiration and prescriptions", title: "Prescription report", dates: true,
+    run: async (from, to) => {
+      const data = await fetchAll(() => supabaseClient.from("v_prescription_report").select("*").gte("prescription_date", from).lte("prescription_date", to).order("prescription_date").order("prescription_no"));
+      const rows = data.map(r => ({ prescription_no: r.prescription_no, prescription_date: r.prescription_date, patient_name: r.patient_name,
+        medicine: medName(r), quantity: num(r.quantity), dispensed: num(r.quantity_dispensed), remaining: num(r.quantity_remaining), status: r.status }));
+      return { cols: [{ k: "prescription_no", l: "Prescription" }, { k: "prescription_date", l: "Date", t: "date" }, { k: "patient_name", l: "Patient" },
+                      { k: "medicine", l: "Medicine" }, { k: "quantity", l: "Quantity", t: "int" }, { k: "dispensed", l: "Dispensed", t: "int" },
+                      { k: "remaining", l: "Remaining", t: "int" }, { k: "status", l: "Status" }],
+               rows, foot: totals(rows, "prescription_no", ["quantity", "dispensed", "remaining"]) };
+    } },
+];
+
+/* ======================================================================
+   SCREEN
+   ====================================================================== */
+let current = null;       // { report, from, to, result }
+let runId = 0;
+let pharmacyName = "PHARMACY";
+
+function fmt(value, type) {
+  if (value == null || value === "") return "";
+  if (type === "money") return money(value);
+  if (type === "int") return Number(value).toLocaleString("en-PH");
+  if (type === "date") return fmtDate(value);
+  return escapeHtml(value);
+}
+
+function renderReport() {
+  const { report, from, to, result } = current;
+  const period = report.dates ? "Period: " + fmtDate(from) + " to " + fmtDate(to) : "As of today";
+
+  document.getElementById("report-head").innerHTML = `
+    <div class="rp-name">${escapeHtml(pharmacyName)}</div>
+    <div class="rp-title">${escapeHtml(report.title.toUpperCase())}</div>
+    <div class="rp-meta">${escapeHtml(period)} | Generated ${escapeHtml(new Date().toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }))} | ${result.rows.length} row${result.rows.length === 1 ? "" : "s"}</div>`;
+
+  const cls = (c) => c.t === "int" || c.t === "money" ? "num" : "";
+  document.getElementById("rp-thead").innerHTML = "<tr>" + result.cols.map(c => `<th class="${cls(c)}">${escapeHtml(c.l)}</th>`).join("") + "</tr>";
+  document.getElementById("rp-tbody").innerHTML = result.rows.map(r =>
+    "<tr>" + result.cols.map(c => `<td class="${cls(c)}">${fmt(r[c.k], c.t)}</td>`).join("") + "</tr>").join("");
+  document.getElementById("rp-tfoot").innerHTML = result.foot && result.rows.length
+    ? "<tr>" + result.cols.map(c => `<td class="${cls(c)}">${fmt(result.foot[c.k], c.t === "date" ? "" : c.t)}</td>`).join("") + "</tr>" : "";
+  document.getElementById("rp-empty").style.display = result.rows.length ? "none" : "block";
+}
+
+async function generate() {
+  const report = REPORTS.find(r => r.id === document.getElementById("report-select").value);
+  const from = document.getElementById("from").value, to = document.getElementById("to").value;
+  document.getElementById("date-controls").style.display = report.dates ? "flex" : "none";
+
+  if (report.dates && (!from || !to)) return;
+  if (report.dates && from > to) { alert("The start date is after the end date."); return; }
+
+  const me = ++runId;
+  document.getElementById("rp-tbody").innerHTML = '<tr><td colspan="9">Loading...</td></tr>';
+  try {
+    const result = await report.run(from, to);
+    if (me !== runId) return;              // a newer request replaced this one
+    current = { report, from, to, result };
+    renderReport();
+  } catch (err) {
+    if (me !== runId) return;
+    document.getElementById("rp-tbody").innerHTML = "";
+    document.getElementById("rp-thead").innerHTML = "";
+    document.getElementById("rp-tfoot").innerHTML = "";
+    document.getElementById("rp-empty").style.display = "block";
+    document.getElementById("rp-empty").textContent = "Could not load this report: " + err.message;
+    current = null;
+  }
+}
+
+function onReportChange() { document.getElementById("rp-empty").textContent = "No data for this report and period."; generate(); }
+
+function setRange(kind) {
+  const today = new Date(), start = new Date();
+  if (kind === "week") start.setDate(today.getDate() - 6);
+  if (kind === "month") start.setDate(1);
+  document.getElementById("from").value = dayStr(start);
+  document.getElementById("to").value = dayStr(today);
+  generate();
+}
+
+function downloadCsv() {
+  if (!current) return;
+  const { report, result } = current;
+  const cell = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+  const lines = [result.cols.map(c => cell(c.l)).join(",")]
+    .concat(result.rows.map(r => result.cols.map(c => cell(c.t === "money" ? num(r[c.k]).toFixed(2) : r[c.k])).join(",")));
+  if (result.foot && result.rows.length) lines.push(result.cols.map(c => cell(c.t === "money" ? num(result.foot[c.k]).toFixed(2) : result.foot[c.k])).join(","));
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = report.id + "-report-" + dayStr(new Date()) + ".csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+(async () => {
+  const me = await getProfile();
+  if (!me) { window.location.href = "login-page.html"; return; }
+
+  const sel = document.getElementById("report-select");
+  let group = null, html = "";
+  REPORTS.forEach(r => {
+    if (r.group !== group) { if (group) html += "</optgroup>"; html += '<optgroup label="' + r.group + '">'; group = r.group; }
+    html += '<option value="' + r.id + '">' + escapeHtml(r.title) + "</option>";
+  });
+  sel.innerHTML = html + "</optgroup>";
+
+  const { data } = await supabaseClient.from("settings").select("value").eq("key", "pharmacy_name").maybeSingle();
+  if (data && data.value) pharmacyName = data.value;
+
+  setRange("month");
+})();
+</script>
+
+</body>
+</html>

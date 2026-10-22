@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager - Expiration</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config/supabase.js"></script>
+<script src="./js/auth.js"></script>
+<script src="./js/medicine-search.js"></script>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  .stat-card.clickable { cursor: pointer; }
+  .stat-card.clickable:hover { background: #F0FAFB; }
+  #report-head { display: none; margin-bottom: 0.75rem; }
+  @media print {
+    body * { visibility: hidden !important; }
+    #report-area, #report-area * { visibility: visible !important; }
+    #report-area { position: absolute; left: 0; top: 0; width: 100%; }
+    #report-area .no-print { display: none !important; }
+    #report-head { display: block; color: #000; }
+    #report-area .table-wrap { border: none; }
+  }
+</style>
+
+</head>
+<body>
+
+<div class="app-layout">
+
+  <aside class="sidebar" id="sidebar"></aside>
+  <script src="./js/sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Expiration</div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="stats">
+        <div class="stat-card clickable" onclick="setFilter('Expired')" title="Show expired batches">
+          <div class="value" id="stat-expired">0</div>
+          <div class="label" id="lbl-expired">Expired batches</div>
+        </div>
+        <div class="stat-card clickable" onclick="setFilter('Expiring Soon')" title="Show expiring-soon batches">
+          <div class="value" id="stat-soon">0</div>
+          <div class="label" id="lbl-soon">Expiring soon</div>
+        </div>
+        <div class="stat-card clickable" onclick="setFilter('Valid')" title="Show valid batches">
+          <div class="value" id="stat-valid">0</div>
+          <div class="label" id="lbl-valid">Valid batches</div>
+        </div>
+      </div>
+
+      <div id="expired-alert" style="display:none; background:#FBEDEA; color:var(--color-danger); border-radius:var(--radius-sm); padding:0.7rem 1rem; margin-bottom:1rem; font-size:0.9rem;"></div>
+
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search by medicine, batch, category..." oninput="renderTable()">
+        <select id="status-filter" onchange="renderTable()" style="padding:0.6rem 0.9rem; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface);">
+          <option value="">All statuses</option>
+          <option>Expired</option>
+          <option>Expiring Soon</option>
+          <option>Valid</option>
+        </select>
+        <button class="btn-secondary" onclick="window.print()">Print report</button>
+        <button class="btn-secondary" onclick="downloadCsv()">Download CSV</button>
+        <button class="btn-danger" id="remove-all-btn" data-hide="manager" style="border:1px solid var(--color-danger);" onclick="removeAllExpired()">Remove all expired stock</button>
+      </div>
+      <div id="rule-note" style="font-size:0.82rem; color:var(--color-text-soft); margin-bottom:0.75rem;"></div>
+
+      <div id="report-area">
+      <div id="report-head"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Medicine</th>
+              <th>Batch</th>
+              <th>Quantity</th>
+              <th>Expiration</th>
+              <th>Time left</th>
+              <th>Value at cost</th>
+              <th>Status</th>
+              <th class="no-print"></th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div class="empty-state" id="empty-state" style="display:none;">No batches match.</div>
+      </div>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+
+<script>
+let batches = [];       // batches that still have stock, from v_inventory_batches
+let soonDays = 30;      // "Expiring Soon" window (settings table)
+let pharmacyName = "PHARMACY";
+let canRemove = false;  // Admin / Pharmacist / Inventory Staff may write off expired stock
+let shownRows = [];     // rows currently on screen (used by print and CSV)
+
+const BADGE = { "Expired": "badge-danger", "Expiring Soon": "badge-warning", "Valid": "badge-success" };
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+const money = (n) => "\u20B1" + Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const medName = (b) => b.medicine_code + " - " + b.medicine_name + (b.strength ? " " + b.strength : "");
+
+function fmtDate(d) {
+  return new Date(d + "T00:00:00").toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
+}
+function timeLeft(days) {
+  if (days < 0)  return Math.abs(days) + " day" + (days === -1 ? "" : "s") + " ago";
+  if (days === 0) return "Today";
+  return days + " day" + (days === 1 ? "" : "s");
+}
+
+async function loadBatches() {
+  const [b, s] = await Promise.all([
+    supabaseClient.from("v_inventory_batches").select("*").gt("quantity", 0).order("expiration_date", { ascending: true }),
+    supabaseClient.from("settings").select("key, value").in("key", ["expiring_soon_days", "pharmacy_name"]),
+  ]);
+  if (b.error) { console.error("Error loading batches:", b.error.message); return; }
+  batches = b.data;
+  (s.data || []).forEach(r => {
+    if (r.key === "expiring_soon_days" && Number(r.value) > 0) soonDays = Number(r.value);
+    if (r.key === "pharmacy_name" && r.value) pharmacyName = r.value;
+  });
+  renderStats();
+  renderTable();
+}
+
+const by = (st) => batches.filter(x => x.expiry_status === st);
+const units = (list) => list.reduce((n, x) => n + x.quantity, 0);
+const value = (list) => list.reduce((n, x) => n + Number(x.stock_value || 0), 0);
+
+function renderStats() {
+  const exp = by("Expired"), soon = by("Expiring Soon"), ok = by("Valid");
+
+  document.getElementById("stat-expired").textContent = exp.length;
+  document.getElementById("stat-soon").textContent = soon.length;
+  document.getElementById("stat-valid").textContent = ok.length;
+  document.getElementById("lbl-expired").textContent = "Expired batches (" + units(exp) + " units, " + money(value(exp)) + " at cost)";
+  document.getElementById("lbl-soon").textContent = "Expiring within " + soonDays + " days (" + units(soon) + " units)";
+  document.getElementById("lbl-valid").textContent = "Valid batches (" + units(ok) + " units)";
+
+  const alertBox = document.getElementById("expired-alert");
+  alertBox.style.display = exp.length ? "block" : "none";
+  alertBox.textContent = exp.length
+    ? exp.length + " expired batch" + (exp.length === 1 ? "" : "es") + " (" + units(exp) + " units) still in stock. They are blocked from sales and dispensing. Remove them from stock to keep inventory accurate."
+    : "";
+  document.getElementById("remove-all-btn").style.display = exp.length && canRemove ? "" : "none";
+
+  document.getElementById("rule-note").textContent =
+    "Expired = past its expiration date. Expiring Soon = expires within " + soonDays + " days. Valid = later than that. Batches with zero stock are not listed.";
+}
+
+function setFilter(status) {
+  const sel = document.getElementById("status-filter");
+  sel.value = sel.value === status ? "" : status;   // click again to clear
+  renderTable();
+}
+
+function renderTable() {
+  const q = document.getElementById("search").value.trim();
+  const status = document.getElementById("status-filter").value;
+  shownRows = searchMedicines(batches, q).filter(b => !status || b.expiry_status === status);
+
+  document.getElementById("empty-state").style.display = shownRows.length ? "none" : "block";
+  document.getElementById("table-body").innerHTML = shownRows.map(b => `
+    <tr>
+      <td>${escapeHtml(medName(b))}</td>
+      <td>${escapeHtml(b.batch_number)}</td>
+      <td>${b.quantity}</td>
+      <td>${fmtDate(b.expiration_date)}</td>
+      <td>${timeLeft(b.days_to_expiry)}</td>
+      <td>${money(b.stock_value)}</td>
+      <td><span class="badge ${BADGE[b.expiry_status] || ""}">${escapeHtml(b.expiry_status)}</span></td>
+      <td class="no-print">${canRemove && b.expiry_status === "Expired"
+        ? `<button class="btn-danger btn-small" style="border:1px solid var(--color-danger);" onclick="removeExpired(${b.inventory_id})">Remove stock</button>` : ""}</td>
+    </tr>`).join("");
+
+  // Printed report header
+  const exp = shownRows.filter(b => b.expiry_status === "Expired");
+  const soon = shownRows.filter(b => b.expiry_status === "Expiring Soon");
+  document.getElementById("report-head").innerHTML = `
+    <div style="font-weight:700; font-size:1.1rem;">${escapeHtml(pharmacyName)}</div>
+    <div style="font-weight:700;">EXPIRATION REPORT</div>
+    <div>Generated: ${escapeHtml(new Date().toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }))}</div>
+    <div>Showing: ${escapeHtml(status || "All statuses")}${q ? " | Search: " + escapeHtml(q) : ""} | ${shownRows.length} batch(es), ${units(shownRows)} units</div>
+    <div>Expired: ${exp.length} batch(es), ${units(exp)} units, ${money(value(exp))} at cost | Expiring soon (${soonDays} days): ${soon.length} batch(es), ${units(soon)} units</div>`;
+}
+
+/* ---------- Lab 22: write expired stock off ----------
+   Same pattern as the Stock Adjustment page: set the batch to 0, add an EXPIRED row to
+   inventory_transactions, and undo the quantity change if the history row cannot be saved. */
+async function writeOff(b, me) {
+  const { data: fresh, error: readErr } = await supabaseClient
+    .from("inventory").select("quantity").eq("inventory_id", b.inventory_id).single();
+  if (readErr) throw readErr;
+  const oldQty = fresh.quantity;
+  if (oldQty <= 0) return 0;                       // already empty
+
+  const { data: updated, error: upErr } = await supabaseClient
+    .from("inventory").update({ quantity: 0 })
+    .eq("inventory_id", b.inventory_id).eq("quantity", oldQty).select("inventory_id");
+  if (upErr) throw upErr;
+  if (!updated || !updated.length) throw new Error("Batch " + b.batch_number + " was changed by someone else. Reload and try again.");
+
+  const { error: txErr } = await supabaseClient.from("inventory_transactions").insert({
+    inventory_id: b.inventory_id, medicine_id: b.medicine_id, transaction_type: "EXPIRED",
+    quantity_change: -oldQty, reference_type: "manual", user_id: me.id,
+    notes: "[Expired] Past expiration date (" + b.expiration_date + "). Qty " + oldQty + " -> 0",
+  });
+  if (txErr) {
+    await supabaseClient.from("inventory").update({ quantity: oldQty }).eq("inventory_id", b.inventory_id).eq("quantity", 0);
+    throw txErr;
+  }
+  return oldQty;
+}
+
+async function removeExpired(inventoryId) {
+  const b = batches.find(x => x.inventory_id === inventoryId);
+  if (!b || b.expiry_status !== "Expired") return;
+  if (!confirm("Remove expired stock?\n\n" + medName(b) + "\nBatch " + b.batch_number + " (expired " + b.expiration_date + ")\n" +
+               b.quantity + " units (" + money(b.stock_value) + " at cost) will be recorded as EXPIRED and set to 0.")) return;
+  try {
+    const me = await getProfile();
+    await writeOff(b, me);
+  } catch (err) { alert("Could not remove the stock: " + err.message); }
+  loadBatches();
+}
+
+async function removeAllExpired() {
+  const exp = by("Expired");
+  if (!exp.length) return;
+  if (!confirm("Remove ALL expired stock?\n\n" + exp.length + " batch(es), " + units(exp) + " units, " + money(value(exp)) +
+               " at cost.\nEach batch is recorded as EXPIRED in the inventory history and set to 0.")) return;
+  const me = await getProfile();
+  let done = 0, failed = [];
+  for (const b of exp) {
+    try { await writeOff(b, me); done++; }
+    catch (err) { failed.push(medName(b) + " / " + b.batch_number + ": " + err.message); }
+  }
+  alert(done + " batch(es) removed." + (failed.length ? "\n\nCould not remove:\n" + failed.join("\n") : ""));
+  loadBatches();
+}
+
+/* ---------- report export ---------- */
+function downloadCsv() {
+  const cell = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+  const rows = [["Medicine", "Batch", "Quantity", "Expiration", "Days left", "Value at cost", "Status"]]
+    .concat(shownRows.map(b => [medName(b), b.batch_number, b.quantity, b.expiration_date, b.days_to_expiry, Number(b.stock_value).toFixed(2), b.expiry_status]));
+  const blob = new Blob(["\uFEFF" + rows.map(r => r.map(cell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "expiration-report-" + new Date().toISOString().slice(0, 10) + ".csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+(async () => {
+  const me = await getProfile();
+  if (!me) { window.location.href = "login-page.html"; return; }
+  canRemove = ["Admin", "Pharmacist", "Inventory Staff"].includes(me.role);
+  loadBatches();
+})();
+</script>
+
+</body>
+</html>

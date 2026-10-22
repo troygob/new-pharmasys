@@ -241,6 +241,17 @@ th {
   font-weight: 600;
   font-size: 0.78rem;
 }
+.course-sort {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.course-sort:hover, .course-sort:focus-visible { color: var(--color-primary); }
+.course-sort:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: #F0FAFB; }
 
