@@ -6,5 +6,6 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 async function logout() {
   await supabaseClient.auth.signOut();
-  window.location.href = "login-page.html";
+  // Clear the top-level router and its cached page iframes when switching users.
+  window.top.location.href = new URL("login-page.html", window.location.href).href;
 }

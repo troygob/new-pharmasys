@@ -35,6 +35,35 @@
   const initialTitle = document.title;
   const pages = new Map();
   let activePath = initialPath;
+  const prefetchedPaths = new Set();
+
+  function prefetchSidebarPages() {
+    document.querySelectorAll(".sidebar-nav a[href]").forEach(link => {
+      const path = routePath(link.href);
+      if (!path || path === initialPath || prefetchedPaths.has(path)) return;
+
+      const hint = document.createElement("link");
+      hint.rel = "prefetch";
+      hint.as = "document";
+      hint.href = new URL(path, window.location.origin).href;
+      document.head.appendChild(hint);
+      prefetchedPaths.add(path);
+    });
+  }
+
+  function schedulePrefetch() {
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(prefetchSidebarPages, { timeout: 3000 });
+    } else {
+      window.setTimeout(prefetchSidebarPages, 1000);
+    }
+  }
+
+  const sidebar = document.querySelector(".sidebar-nav");
+  if (sidebar) {
+    schedulePrefetch();
+    new MutationObserver(schedulePrefetch).observe(sidebar, { childList: true, subtree: true });
+  }
 
   function setTitle(title) {
     if (title) document.title = title;
