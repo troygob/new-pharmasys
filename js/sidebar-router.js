@@ -37,6 +37,14 @@
   let activePath = initialPath;
   const prefetchedPaths = new Set();
 
+  window.pharmacyClearPageCache = function () {
+    pages.forEach(frame => frame.remove());
+    pages.clear();
+    prefetchedPaths.clear();
+    document.querySelectorAll('link[rel="prefetch"]').forEach(link => link.remove());
+    activePath = initialPath;
+  };
+
   function prefetchSidebarPages() {
     document.querySelectorAll(".sidebar-nav a[href]").forEach(link => {
       const path = routePath(link.href);
