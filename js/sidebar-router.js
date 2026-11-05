@@ -45,6 +45,18 @@
     activePath = initialPath;
   };
 
+  // A new sign-in can replace the Supabase user without a full page navigation.
+  // Reload the shell so its sidebar and any retained page iframes use the new profile.
+  if (document.querySelector(".app-layout") && window.supabaseClient?.auth?.onAuthStateChange) {
+    window.supabaseClient.auth.onAuthStateChange(event => {
+      if (event !== "SIGNED_IN") return;
+      window.setTimeout(() => {
+        window.pharmacyClearPageCache();
+        window.location.reload();
+      }, 0);
+    });
+  }
+
   function prefetchSidebarPages() {
     document.querySelectorAll(".sidebar-nav a[href]").forEach(link => {
       const path = routePath(link.href);
