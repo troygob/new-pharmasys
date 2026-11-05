@@ -351,6 +351,8 @@ tr:hover td { background: #F0FAFB; }
   padding: 1.75rem;
   width: 100%;
   max-width: 440px;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
 }
 .assignment-modal {
   max-height: calc(100vh - 2rem);
