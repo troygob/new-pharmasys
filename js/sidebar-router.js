@@ -45,11 +45,26 @@
     activePath = initialPath;
   };
 
-  // A new sign-in can replace the Supabase user without a full page navigation.
-  // Reload the shell so its sidebar and any retained page iframes use the new profile.
-  if (document.querySelector(".app-layout") && window.supabaseClient?.auth?.onAuthStateChange) {
-    window.supabaseClient.auth.onAuthStateChange(event => {
+  // Discard retained pages only when the authenticated account actually changes.
+  if (document.querySelector(".app-layout")) {
+    let routerUserId = null;
+    let hasInitialSession = false;
+    supabaseClient.auth.onAuthStateChange((event, session) => {
+      const nextUserId = session?.user?.id || null;
+      if (event === "INITIAL_SESSION") {
+        routerUserId = nextUserId;
+        hasInitialSession = true;
+        return;
+      }
       if (event !== "SIGNED_IN") return;
+      if (!hasInitialSession) {
+        routerUserId = nextUserId;
+        hasInitialSession = true;
+        return;
+      }
+      if (!routerUserId || !nextUserId || nextUserId === routerUserId) return;
+
+      routerUserId = nextUserId;
       window.setTimeout(() => {
         window.pharmacyClearPageCache();
         window.location.reload();
