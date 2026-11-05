@@ -351,6 +351,8 @@ tr:hover td { background: #F0FAFB; }
   padding: 1.75rem;
   width: 100%;
   max-width: 440px;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
 }
 .assignment-modal {
   max-height: calc(100vh - 2rem);
@@ -447,3 +449,11 @@ tr:hover td { background: #F0FAFB; }
 }
 .sidebar-user-name { font-weight: 600; }
 .sidebar-user-role { opacity: 0.75; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
