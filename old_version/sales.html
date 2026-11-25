@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Manager</title>
+
+<!-- Supabase client library, loaded from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="styles.css">
+
+</head>
+<body>
+
+<div class="app-layout">
+
+<aside class="sidebar" id="sidebar"></aside>
+<script src="sidebar.js"></script>
+
+  <div class="main-content">
+    <header>
+      <div class="inner">
+        <div>
+          <h1>Pharmacy Manager</h1>
+          <div class="subtitle">Page : Sales</div>
+        </div>
+
+      </div>
+    </header>
+
+    <main>
+      <div class="stats">
+        <div class="stat-card">
+          <div class="value" id="stat-total">0</div>
+          <div class="label">Completed sales</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-today">0</div>
+          <div class="label">Sales today</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-revenue">0.00</div>
+          <div class="label">Revenue today</div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search by sale no. or customer..." oninput="renderTable()">
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Sale no.</th>
+              <th>Date</th>
+              <th>Customer</th>
+              <th>Total</th>
+              <th>Payment</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="table-body">
+            <!-- rows injected by JS -->
+          </tbody>
+        </table>
+        <div class="empty-state" id="empty-state" style="display:none;">
+          No sales recorded yet.
+        </div>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+
+<script>
+const SUPABASE_URL = "https://xmzspbblssnmcvccftgu.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhtenNwYmJsc3NubWN2Y2NmdGd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5ODU4MjksImV4cCI6MjEwNDU2MTgyOX0.KLnTNPlmf5nLVVN6WBslLoEYyUEtzKclpgVvO6YHpsY";
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+async function logout() {
+  await supabaseClient.auth.signOut();
+  window.location.href = "login-page.html";
+}
+
+let sales = [];
+
+async function loadSales() {
+  const { data, error } = await supabaseClient
+    .from("sales")
+    .select("sale_id, sale_no, sale_date, customer_name, total_amount, status, payments(payment_method)")
+    .order("sale_date", { ascending: false });
+
+  if (error) {
+    console.error("Error loading sales:", error.message);
+    return;
+  }
+  sales = data;
+  renderTable();
+  renderStats();
+}
+
+function statusBadge(s) {
+  const cls = s.status === "Completed" ? "badge-success" : "badge-danger";
+  return `<span class="badge ${cls}">${escapeHtml(s.status)}</span>`;
+}
+
+function renderTable() {
+  const query = document.getElementById("search").value.toLowerCase();
+  const filtered = sales.filter(s =>
+    s.sale_no.toLowerCase().includes(query) ||
+    (s.customer_name || "").toLowerCase().includes(query)
+  );
+
+  document.getElementById("empty-state").style.display = filtered.length ? "none" : "block";
+
+  document.getElementById("table-body").innerHTML = filtered.map(s => `
+    <tr>
+      <td>${escapeHtml(s.sale_no)}</td>
+      <td>${new Date(s.sale_date).toLocaleString()}</td>
+      <td>${escapeHtml(s.customer_name || "Walk-in")}</td>
+      <td>${Number(s.total_amount).toFixed(2)}</td>
+      <td>${escapeHtml([...new Set((s.payments || []).map(p => p.payment_method))].join(", ") || "—")}</td>
+      <td>${statusBadge(s)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderStats() {
+  const today = new Date().toDateString();
+  const done = sales.filter(s => s.status === "Completed");
+  const todays = done.filter(s => new Date(s.sale_date).toDateString() === today);
+  document.getElementById("stat-total").textContent = done.length;
+  document.getElementById("stat-today").textContent = todays.length;
+  document.getElementById("stat-revenue").textContent =
+    todays.reduce((sum, s) => sum + Number(s.total_amount), 0).toFixed(2);
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (!session) { window.location.href = "login-page.html"; return; }
+  loadSales();
+})();
+</script>
+
+</body>
+</html>
